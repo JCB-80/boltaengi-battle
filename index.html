@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>볼탱이 대전</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Jua&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles/main.css?v=44" />
+</head>
+<body>
+  <!-- 0. 최초 구동 시 구글 전면 광고(Interstitial Ad) 게이트 -->
+  <div id="interstitialAdOverlay" class="interstitial-ad-backdrop" role="dialog" aria-label="구글 전면 광고">
+    <div class="interstitial-ad-topbar">
+      <span class="google-ad-badge">Google 전면 광고</span>
+      <button id="closeInterstitialBtn" type="button" class="interstitial-close-btn" disabled>⏳ 3초 후 닫기</button>
+    </div>
+    <div class="interstitial-ad-box">
+      <span class="interstitial-kicker">SPONSORED · FULLSCREEN INTERSTITIAL</span>
+      <div class="interstitial-ad-visual">📢</div>
+      <h2 class="interstitial-ad-title">Google AdSense / AdMob 전면 광고 영역</h2>
+      <p class="interstitial-ad-desc">
+        실제 배포 시 이 영역에 Google 전면 광고 태그를 연결하면<br />
+        광고 시청 후 로그인 · 회원가입 화면으로 자동 이동합니다.
+      </p>
+      <!-- 실제 AdSense/AdMob 전면 광고 코드 삽입 위치 -->
+    </div>
+  </div>
+
+  <!-- 1. 게임 진입 전 로비 화면 (모드 · 캐릭터 · 지형 · AI 난이도 설정) -->
+  <div id="lobbyScreen" class="lobby-screen">
+    <div class="lobby-card">
+      <div class="lobby-header">
+        <span class="brand-badge">CLEAN-IP BAKERY SIEGE</span>
+        <h1 class="lobby-title">볼탱이 대전</h1>
+        <p class="lobby-sub">폭신한 빵 위에서 볼살을 당겨 쏘는 말랑 물리 공성전!</p>
+        <button id="rankBadgeBtn" type="button" class="rank-pill" title="클릭하여 계급 외형 꾸미기 ON/OFF (성능 차이 없음)">
+          🌱 Lv.1 견습 발명가 (0/100)
+        </button>
+        <div class="lobby-profile-bar">
+          <span id="profileSummaryText" class="profile-summary-text">🏫 내 소속 정보를 불러오는 중...</span>
+          <button id="lobbyBgmBtn" type="button" class="profile-edit-btn" title="로비 배경음 켜기/끄기">🎵 BGM</button>
+          <button id="openProfileBtn" type="button" class="profile-edit-btn">✏️ 내 정보</button>
+        </div>
+      </div>
+
+      <div class="lobby-char-picker">
+        <div class="char-picker-head">
+          <span class="field-label">캐릭터 선택 (20종)</span>
+          <div class="gender-tabs" role="tablist">
+            <button type="button" class="gender-tab active" data-gender="ALL">전체 20</button>
+            <button type="button" class="gender-tab" data-gender="M">👦 남자 10</button>
+            <button type="button" class="gender-tab" data-gender="F">👧 여자 10</button>
+          </div>
+        </div>
+        <div id="charAvatarGrid" class="char-avatar-grid" role="radiogroup" aria-label="캐릭터 아바타 선택"></div>
+        <div class="selected-char-stage">
+          <canvas id="selectedCharPreviewCanvas" width="132" height="122"></canvas>
+          <div id="selectedCharBanner" class="selected-char-banner">
+            선택됨: <strong>01 모찌웅</strong> · 꿀벌 아기곰 (딸기 시럽 메가 스매시)
+          </div>
+        </div>
+        <input id="charSelect" type="hidden" value="M01_MOCHI" />
+      </div>
+
+      <div class="lobby-social-hub">
+        <div class="social-hub-tabs" role="tablist" aria-label="대전 상대 방식">
+          <button type="button" class="social-tab active" data-hub="classic">🎮 기본 대전</button>
+          <button type="button" class="social-tab" data-hub="friend">🤝 친구 초대</button>
+          <button type="button" class="social-tab" data-hub="school">🏫 반·학교 대전</button>
+          <button type="button" class="social-tab" data-hub="random">🎲 랜덤 만나기</button>
+        </div>
+
+        <!-- 친구 아이디 초대 패널 -->
+        <div id="hubPanelFriend" class="social-panel hidden">
+          <div class="social-row">
+            <input id="friendIdInput" type="text" class="social-input" placeholder="친구 아이디 입력 (예: berry_queen)" maxlength="24" />
+            <button id="addFriendBtn" type="button" class="social-mini-btn">+ 추가</button>
+          </div>
+          <div id="friendQuickChips" class="quick-chips"></div>
+          <div class="social-options-row">
+            <label class="radio-pill">
+              <input type="radio" name="friendPlayStyle" value="local2p" checked />
+              <span>📱 같은 기기 2인 대전</span>
+            </label>
+            <label class="radio-pill">
+              <input type="radio" name="friendPlayStyle" value="ai_duel" />
+              <span>🤖 친구 AI 대결</span>
+            </label>
+            <button id="copyInviteBtn" type="button" class="social-mini-btn outline">🔗 초대링크</button>
+          </div>
+          <p id="inviteCopyToast" class="social-hint hidden">초대 링크가 복사되었어요! 친구에게 공유해 보세요.</p>
+        </div>
+
+        <!-- 학교명 & 반정보 기반 대전 패널 -->
+        <div id="hubPanelSchool" class="social-panel hidden">
+          <div id="schoolMyBadge" class="school-my-badge">
+            내 소속: <strong id="mySchoolClassLabel">미등록 (회원가입 필요)</strong>
+          </div>
+          <div class="school-battle-pills" role="group" aria-label="반·학교 대전 종류">
+            <button type="button" class="school-mode-pill active" data-school-mode="same_class">🎓 우리 반 내전</button>
+            <button type="button" class="school-mode-pill" data-school-mode="other_class">⚡ 다른 반 대결</button>
+            <button type="button" class="school-mode-pill" data-school-mode="other_school">🏫 학교 대항전</button>
+          </div>
+          <div id="targetClassWrap" class="social-target-wrap hidden">
+            <input id="targetClassInput" type="text" class="social-input" placeholder="상대 반 입력 (예: 3학년 1반)" maxlength="20" />
+            <div class="quick-chips">
+              <button type="button" class="quick-chip target-class-chip" data-val="3학년 1반">3학년 1반</button>
+              <button type="button" class="quick-chip target-class-chip" data-val="3학년 3반">3학년 3반</button>
+              <button type="button" class="quick-chip target-class-chip" data-val="4학년 2반">4학년 2반</button>
+            </div>
+          </div>
+          <div id="targetSchoolWrap" class="social-target-wrap hidden">
+            <div class="school-autocomplete-wrap">
+              <input id="targetSchoolInput" type="text" class="social-input" placeholder="상대 학교명 검색 (예: 염작)" maxlength="24" autocomplete="off" />
+              <div id="targetSchoolAutocomplete" class="school-autocomplete-list hidden"></div>
+            </div>
+            <div class="quick-chips">
+              <button type="button" class="quick-chip target-school-chip" data-val="푸딩초등학교">푸딩초</button>
+              <button type="button" class="quick-chip target-school-chip" data-val="크루아상중학교">크루아상중</button>
+              <button type="button" class="quick-chip target-school-chip" data-val="슈가봉봉고등학교">슈가봉봉고</button>
+            </div>
+          </div>
+          <div class="social-options-row">
+            <label class="radio-pill">
+              <input type="radio" name="schoolTeamSize" value="1v1" checked />
+              <span>1:1 대표전</span>
+            </label>
+            <label class="radio-pill">
+              <input type="radio" name="schoolTeamSize" value="2v2" />
+              <span>2:2 대항전</span>
+            </label>
+          </div>
+
+          <!-- 학교 내 / 반 내 상대 검색 & 도전하기 -->
+          <div class="opponent-search-box">
+            <div class="search-scope-pills" role="group" aria-label="대전 상대 검색 범위">
+              <button type="button" class="search-scope-pill active" data-scope="school">🏫 우리 학교 내 검색</button>
+              <button type="button" class="search-scope-pill" data-scope="class">🎓 우리 반 내 검색</button>
+              <button type="button" class="search-scope-pill" data-scope="all">🌐 전체 검색</button>
+            </div>
+            <input id="opponentSearchInput" type="text" class="social-input" placeholder="학교/반 친구 이름 또는 아이디 검색..." maxlength="24" />
+            <div id="opponentSearchList" class="opponent-search-list"></div>
+          </div>
+        </div>
+
+        <!-- 랜덤 만나기 패널 -->
+        <div id="hubPanelRandom" class="social-panel hidden">
+          <p class="social-hint">🎲 전국의 말랑 요정 중 랜덤 학교·반 상대와 즉시 매칭되어 대결합니다!</p>
+          <div class="social-options-row">
+            <label class="radio-pill">
+              <input type="radio" name="randomTeamSize" value="1v1" checked />
+              <span>1:1 랜덤 매칭</span>
+            </label>
+            <label class="radio-pill">
+              <input type="radio" name="randomTeamSize" value="2v2" />
+              <span>2:2 랜덤 팀전</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="lobby-grid">
+        <label class="lobby-field">
+          <span class="field-label">대전 모드</span>
+          <select id="modeSelect">
+            <option value="1v1_ai" selected>1:1 AI 대전</option>
+            <option value="1v1_local">1:1 친구 로컬</option>
+            <option value="1v1v1_ffa">1:1:1 삼파전</option>
+            <option value="4p_ffa">1:1:1:1 4인 난투</option>
+            <option value="2v2_team">2:2 팀 공성전</option>
+          </select>
+        </label>
+
+        <label class="lobby-field">
+          <span class="field-label">빵 지형</span>
+          <select id="mapSelect">
+            <option value="random" selected>🎲 랜덤 빵 (구조+테마)</option>
+            <option value="bridge">🍞 버터 식빵 브릿지</option>
+            <option value="twin_peaks">🥐 슈가 크루아상 협곡</option>
+            <option value="archipelago">🍓 3단 딸기케이크 군도</option>
+            <option value="citadel">🍫 초코 브라우니 성채</option>
+          </select>
+        </label>
+
+        <label class="lobby-field">
+          <span class="field-label">AI 난이도</span>
+          <select id="aiSelect">
+            <option value="lv1">Lv.1 입문</option>
+            <option value="lv2">Lv.2 쉬움</option>
+            <option value="lv3" selected>Lv.3 보통</option>
+            <option value="lv4">Lv.4 어려움</option>
+            <option value="lv5">Lv.5 마스터</option>
+            <option value="dummy">훈련 허수아비</option>
+          </select>
+        </label>
+      </div>
+
+      <button id="startMatchBtn" type="button" class="primary-fire-btn lobby-start-btn">
+        🎮 게임 시작!
+      </button>
+    </div>
+  </div>
+
+  <!-- 2. 인게임 화면 (상단 플로팅 HUD + 코너 위젯 + 하단 1줄 슬림 바) -->
+  <div id="gameScreen" class="app-shell hidden">
+    <!-- 메인 게임 캔버스 스테이지 -->
+    <main class="stage-wrap">
+      <div id="canvasFrame" class="canvas-frame">
+        <canvas id="gameCanvas" width="1600" height="900"></canvas>
+
+        <!-- 상단 중앙 플로팅 매치/체력/바람 HUD -->
+        <div id="topScorePill" class="floating-top-hud">
+          <div class="hud-player left">
+            <span id="hudLeftName" class="hud-p-name">나 (모찌웅)</span>
+            <span id="hudLeftHp" class="hud-hp-badge">HP 120</span>
+          </div>
+          <div class="hud-center-meta">
+            <span id="turnTimelineBadge" class="hud-turn-badge">TURN 1</span>
+            <div class="hud-wind-inline">
+              <div class="wind-meter-track hidden"><div id="windMeterFill" class="wind-meter-fill"></div></div>
+              <strong id="windValueText" class="hud-wind-text">무풍 0.0</strong>
+              <button id="weatherToggleBtn" type="button" class="weather-pill hidden" title="날씨 전환">☀️</button>
+            </div>
+          </div>
+          <div class="hud-player right">
+            <span id="hudRightName" class="hud-p-name">AI</span>
+            <span id="hudRightHp" class="hud-hp-badge enemy">HP 120</span>
+          </div>
+        </div>
+
+        <!-- 상단 우측 최소 유틸 버튼 (사운드 · 새판 · 로비) -->
+        <div class="floating-top-actions">
+          <button id="tornadoTestBtn" type="button" class="ghost-btn hidden" title="태풍 테스트">🌪️</button>
+          <button id="muteBtn" type="button" class="floating-icon-btn" title="사운드 켜기/끄기">🔊</button>
+          <button id="restartBtn" type="button" class="floating-icon-btn" title="새 판 리셋">🔄</button>
+          <button id="backToLobbyBtn" type="button" class="floating-lobby-btn">로비</button>
+        </div>
+
+        <!-- 좌하단 플로팅 고각 카드 -->
+        <div class="floating-corner-card left">
+          <span class="corner-label">고각</span>
+          <strong id="angleValueText" class="corner-val">45°</strong>
+          <button id="angleMinusBtn" type="button" class="mini-btn hidden">-</button>
+          <button id="anglePlusBtn" type="button" class="mini-btn hidden">+</button>
+          <span id="prevShotText" class="prev-marker hidden">이전: --</span>
+        </div>
+
+        <!-- 우하단 플로팅 구슬 선택기 -->
+        <div class="floating-corner-card right">
+          <button id="shellCycleBtn" type="button" class="floating-shell-btn">
+            <span class="corner-label">구슬</span>
+            <strong id="shellDescText" class="corner-val">도토리 팝볼</strong>
+            <span class="shell-arrow">▲</span>
+          </button>
+          <div id="shellPopover" class="shell-popover hidden" role="radiogroup" aria-label="볼살 구슬 및 스킬 선택">
+            <div class="shell-popover-row">
+              <button type="button" class="shell-btn active" data-shell="ACORN_SPLIT">
+                <span class="shell-title">도토리 팝볼</span>
+                <span class="shell-sub">3갈래</span>
+              </button>
+              <button type="button" class="shell-btn" data-shell="AQUA_DRILL">
+                <span class="shell-title">물방울 시추볼</span>
+                <span class="shell-sub">급강하</span>
+              </button>
+              <button type="button" class="shell-btn" data-shell="CHEESE_BOUNCE">
+                <span class="shell-title">탱탱 치즈볼</span>
+                <span class="shell-sub">도탄</span>
+              </button>
+            </div>
+            <div class="skill-strip" role="group" aria-label="캐릭터 스킬 모드">
+              <button type="button" class="skill-chip active" data-skill-slot="0" data-skill="NORMAL">일반 사격</button>
+              <button id="charSkillBtn1" type="button" class="skill-chip" data-skill-slot="1" data-skill="TORI_SMASH">🌰 강타</button>
+              <button id="charSkillBtn2" type="button" class="skill-chip" data-skill-slot="2" data-skill="TORI_DOUBLE">⚡ 2연발</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 환경 & 재해 시각적 경고 배너 스택 -->
+        <div id="envAlertStack" class="env-alert-stack" aria-live="polite"></div>
+
+        <!-- 비행 중 에어 트리거 플로팅 배너 -->
+        <button id="floatingAirBtn" type="button" class="floating-air-btn hidden">
+          ⚡ 에어 트리거 발동! (클릭 / SPACE)
+        </button>
+
+        <!-- 내 턴 아닐 때 캐릭터 터치 시 돋보기 확대 & 볼꼬집기 교감 오버레이 -->
+        <div id="petMagnifierOverlay" class="pet-magnifier-backdrop hidden" role="dialog" aria-label="캐릭터 돋보기 쓰담기">
+          <div class="pet-magnifier-lens">
+            <span id="petMoodBadge" class="pet-mood-badge">💕 주인님~ 내 턴 기다리는 중!</span>
+            <canvas id="petMagnifierCanvas" width="320" height="320"></canvas>
+            <p class="pet-hint-text">볼살을 꼬집어 당겨보세요! (바깥 터치 시 닫기)</p>
+            <button id="closePetMagnifierBtn" type="button" class="pet-close-btn" aria-label="돋보기 닫기">✕</button>
+          </div>
+        </div>
+
+        <!-- 매치 종료 오버레이 -->
+        <div id="gameOverModal" class="modal-backdrop hidden">
+          <div class="modal-card">
+            <p class="modal-kicker">MATCH RESULT</p>
+            <h2 id="winnerHeadline" class="modal-title">승리!</h2>
+            <p class="modal-sub">지형 굴착(드롭아웃)과 간식 장애물 연쇄 붕괴를 조합해 보세요.</p>
+            <div class="modal-actions">
+              <button id="rewardAdBtn" type="button" class="secondary-btn">📺 광고 보고 +50 XP</button>
+              <button id="modalRestartBtn" type="button" class="primary-fire-btn">다시 하기</button>
+              <button id="modalLobbyBtn" type="button" class="secondary-btn">로비로</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- 하단 1줄 슬림 액션 바 (이동 · 파워 · 궁극기 · 발사) -->
+    <footer class="control-dock slim-dock">
+      <div class="slim-move-group">
+        <button id="moveLeftBtn" type="button" class="step-btn">◀</button>
+        <div class="fuel-bar-track slim-fuel">
+          <div id="fuelBarFill" class="fuel-bar-fill"></div>
+          <span id="fuelText" class="slim-fuel-txt">연료 100%</span>
+        </div>
+        <button id="moveRightBtn" type="button" class="step-btn">▶</button>
+      </div>
+
+      <div class="slim-power-group">
+        <button id="powerMinusBtn" type="button" class="mini-btn hidden">-</button>
+        <input id="powerRange" type="range" min="15" max="100" value="62" />
+        <button id="powerPlusBtn" type="button" class="mini-btn hidden">+</button>
+        <strong id="powerValueText" class="dial-val">62%</strong>
+      </div>
+
+      <button id="ultBtn" type="button" class="ult-chip" disabled>
+        🔥 궁극 <span id="ultPctText">35%</span>
+      </button>
+
+      <button id="fireActionBtn" type="button" class="primary-fire-btn slim-fire-btn">
+        🔥 볼살 발사
+      </button>
+    </footer>
+  </div>
+
+  <!-- 3. 회원가입 / 내 정보 등록 모달 (친구 아이디 · 학교명 · 반정보) -->
+  <div id="profileModal" class="modal-backdrop hidden">
+    <div class="modal-card profile-modal-card">
+      <p class="modal-kicker">JELLY-CHEEK ID CARD</p>
+      <h2 class="modal-title">회원가입 · 학교/반 등록</h2>
+      <p class="modal-sub">친구 아이디 초대 및 우리 반·우리 학교 대항전에 사용됩니다.</p>
+
+      <form id="profileForm" class="profile-form">
+        <label class="profile-field">
+          <span>친구 아이디 (영문/숫자/한글)</span>
+          <input id="profUserId" type="text" required maxlength="20" placeholder="예: mochi_king" />
+        </label>
+        <label class="profile-field">
+          <span>닉네임</span>
+          <input id="profNickname" type="text" required maxlength="16" placeholder="예: 모찌대장" />
+        </label>
+        <label class="profile-field">
+          <span>학교명 (한국 학교 서버 실시간 검색)</span>
+          <div class="school-autocomplete-wrap">
+            <input id="profSchool" type="text" required maxlength="30" placeholder="예: 염작 (입력하면 학교가 자동 검색돼요)" autocomplete="off" />
+            <div id="schoolAutocompleteList" class="school-autocomplete-list hidden"></div>
+          </div>
+        </label>
+        <div class="profile-field">
+          <span>학년 · 반 (숫자만 입력)</span>
+          <div class="grade-class-row">
+            <label class="num-unit-box">
+              <input id="profGradeNum" type="number" inputmode="numeric" min="1" max="6" required placeholder="3" />
+              <span>학년</span>
+            </label>
+            <label class="num-unit-box">
+              <input id="profClassNum" type="number" inputmode="numeric" min="1" max="30" required placeholder="2" />
+              <span>반</span>
+            </label>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button type="submit" class="primary-fire-btn">💾 등록 완료</button>
+          <button id="closeProfileModalBtn" type="button" class="secondary-btn">닫기</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 4. 랜덤 만나기 / 매칭 진행 오버레이 -->
+  <div id="matchmakingOverlay" class="modal-backdrop hidden">
+    <div class="modal-card matchmaking-card">
+      <p class="modal-kicker">MATCHMAKING</p>
+      <div id="matchmakingSpinner" class="matchmaking-spinner">🎲</div>
+      <h2 id="matchmakingTitle" class="modal-title">상대를 찾는 중...</h2>
+      <p id="matchmakingDetail" class="modal-sub">전국 말랑 요정 네트워크에 연결 중입니다.</p>
+      <button id="cancelMatchmakingBtn" type="button" class="secondary-btn">취소</button>
+    </div>
+  </div>
+
+  <!-- 5. 상대에게 뜨는 도전장 수신 알림창 -->
+  <div id="challengeAlertModal" class="modal-backdrop hidden">
+    <div class="modal-card challenge-alert-card">
+      <p class="modal-kicker">CHALLENGE ALERT</p>
+      <div class="challenge-alert-icon">⚔️</div>
+      <h2 id="challengeAlertTitle" class="modal-title">도전장이 도착했어요!</h2>
+      <p id="challengeAlertText" class="modal-sub">누군가 당신에게 대전을 도전하였습니다!</p>
+      <div class="modal-actions">
+        <button id="acceptChallengeBtn" type="button" class="primary-fire-btn">🔥 도전 수락!</button>
+        <button id="declineChallengeBtn" type="button" class="secondary-btn">거절</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 6. 보상형 동영상 광고(Rewarded Ad) 오버레이 -->
+  <div id="rewardAdOverlay" class="interstitial-ad-backdrop hidden" role="dialog" aria-label="보상형 광고">
+    <div class="interstitial-ad-topbar">
+      <span class="google-ad-badge">Google 보상형 광고</span>
+      <button id="closeRewardAdBtn" type="button" class="interstitial-close-btn" disabled>⏳ 5초 후 보상 받기</button>
+    </div>
+    <div class="interstitial-ad-box">
+      <span class="interstitial-kicker">REWARDED AD · +50 XP BONUS</span>
+      <div class="interstitial-ad-visual">🎁</div>
+      <h2 class="interstitial-ad-title">보상형 광고 시청 중</h2>
+      <p class="interstitial-ad-desc">
+        5초 시청 완료 시 경험치 <strong>+50 XP</strong> 보상이 즉시 지급됩니다!
+      </p>
+    </div>
+  </div>
+
+  <!-- 7. 최하단 구글 애드센스(AdSense) 배너 광고 슬롯 -->
+  <aside id="googleAdFooterSlot" class="google-ad-footer" aria-label="광고 영역">
+    <div class="google-ad-container">
+      <span class="google-ad-badge">AD</span>
+      <span class="google-ad-label">Google AdSense 배너 광고 자리 (모바일 320×50 · PC 728×90)</span>
+      <!-- 실제 AdSense 적용 시 아래 주석을 해제하고 data-ad-client / data-ad-slot을 입력하세요.
+      <ins class="adsbygoogle"
+           style="display:block"
+           data-ad-client="ca-pub-XXXXXXXXXXXXXXXX"
+           data-ad-slot="XXXXXXXXXX"
+           data-ad-format="auto"
+           data-full-width-responsive="true"></ins>
+      -->
+    </div>
+  </aside>
+
+  <script src="./vendor/matter.min.js"></script>
+  <script type="module" src="./src/main.js?v=46"></script>
+</body>
+</html>
