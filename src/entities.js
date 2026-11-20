@@ -68,7 +68,7 @@ export class CoasterCart {
 
   getLaunchVelocity(elevation = this.aimElevation, power = this.aimPower, facing = this.facing) {
     const rad = (elevation * Math.PI) / 180;
-    const speed = 4.2 + (power / 100) * 14.8;
+    const speed = 5.5 + (power / 100) * 20.5;
     return {
       vx: facing * Math.cos(rad) * speed,
       vy: -Math.sin(rad) * speed,
@@ -285,22 +285,21 @@ export class CapsuleProjectile {
 
     const spawned = [];
     if (this.shellKey === 'ACORN_SPLIT') {
-      // 3갈래 부채꼴 분열
-      const baseAngle = Math.atan2(this.vy, this.vx);
-      const speed = Math.hypot(this.vx, this.vy) * 1.04;
+      // 공중 터치 시 수직 낙하 (3갈래 도토리 수직 투하)
+      this.vx = 0;
+      this.vy = 15.0;
       this.damage = 20;
       this.craterRadius = 30;
 
-      for (const deltaDeg of [-12, 12]) {
-        const ang = baseAngle + (deltaDeg * Math.PI) / 180;
+      for (const offsetX of [-16, 16]) {
         spawned.push(
           new CapsuleProjectile({
             ownerId: this.ownerId,
             shellKey: this.shellKey,
-            x: this.x,
+            x: this.x + offsetX,
             y: this.y,
-            vx: Math.cos(ang) * speed,
-            vy: Math.sin(ang) * speed,
+            vx: offsetX * 0.08,
+            vy: 15.0,
             isSubShell: true,
             overrideDamage: 18,
             overrideRadius: 27,
@@ -309,17 +308,15 @@ export class CapsuleProjectile {
       }
     } else if (this.shellKey === 'AQUA_DRILL') {
       // 수평 정지 후 초고속 수직 급강하 지형 굴착
-      this.vx *= 0.1;
-      this.vy = 16.5;
+      this.vx = 0;
+      this.vy = 17.5;
       this.craterRadius = 74;
       this.damage = 34;
       this.drillActive = true;
-    } else if (this.shellKey === 'CHEESE_BOUNCE') {
-      // 역추진 부메랑 스핀 커브
-      const dir = this.vx >= 0 ? -1 : 1;
-      this.vx = -this.vx * 0.72 + dir * 5.4;
-      this.vy = Math.min(this.vy, 2.2);
-      this.reverseSpin = true;
+    } else {
+      // 치즈 바운스 등 기타 탄종도 화면 터치 시 수직 낙하
+      this.vx = 0;
+      this.vy = 15.5;
     }
 
     return spawned;

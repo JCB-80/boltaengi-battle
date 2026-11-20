@@ -47,7 +47,8 @@ export async function searchKoreanSchools(query) {
 
   try {
     const url = `https://open.neis.go.kr/hub/schoolInfo?Type=json&pIndex=1&pSize=10&SCHUL_NM=${encodeURIComponent(q)}`;
-    const res = await fetch(url);
+    const fetchOpts = typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? { signal: AbortSignal.timeout(3000) } : {};
+    const res = await fetch(url, fetchOpts);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     const rows = data?.schoolInfo?.[1]?.row || [];

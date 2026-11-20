@@ -64,6 +64,66 @@ export const BIOMES = {
     hillFar: 'rgba(244, 114, 182, 0.28)',
     hillNear: 'rgba(251, 207, 232, 0.3)',
   },
+  matcha: {
+    name: '말차 크림 케이크',
+    core: '#14532D',
+    mid: '#86EFAC', // 폭신한 제주 말차 시트
+    jam: '#9F1239', // 달콤한 팥 앙금 샌드 층
+    top: '#DCFCE7',
+    crust: '#FFFBEB', // 하얀 우유 생크림 토핑
+    crustHi: '#4ADE80',
+    outline: '#14532D',
+    skyTop: '#2DD4BF',
+    skyMid: '#CCFBF1',
+    skyBot: '#FEF9C3',
+    hillFar: 'rgba(74, 222, 128, 0.25)',
+    hillNear: 'rgba(45, 212, 191, 0.22)',
+  },
+  waffle: {
+    name: '허니 버터 와플',
+    core: '#78350F',
+    mid: '#FBBF24', // 바삭한 황금 와플 반죽
+    jam: '#D97706', // 메이플 허니 시럽 층
+    top: '#FEF3C7',
+    crust: '#F59E0B', // 꿀 글레이즈 크러스트
+    crustHi: '#FDE047',
+    outline: '#78350F',
+    skyTop: '#F97316',
+    skyMid: '#FDBA74',
+    skyBot: '#FEF3C7',
+    hillFar: 'rgba(251, 146, 60, 0.28)',
+    hillNear: 'rgba(253, 186, 116, 0.28)',
+  },
+  blueberry: {
+    name: '블루베리 타르트',
+    core: '#312E81',
+    mid: '#C7D2FE', // 부드러운 크림치즈 타르트
+    jam: '#6D28D9', // 진한 블루베리 콩포트 층
+    top: '#EEF2FF',
+    crust: '#8B5CF6', // 보라빛 베리 글레이즈
+    crustHi: '#DDD6FE',
+    outline: '#312E81',
+    skyTop: '#6366F1',
+    skyMid: '#DDD6FE',
+    skyBot: '#FCE7F3',
+    hillFar: 'rgba(139, 92, 246, 0.26)',
+    hillNear: 'rgba(196, 181, 253, 0.28)',
+  },
+  melon: {
+    name: '메론 소다 마카롱',
+    core: '#0F766E',
+    mid: '#A7F3D0', // 상큼한 메론 마카롱 꼬끄
+    jam: '#FDE047', // 레몬 소다 버터크림
+    top: '#ECFDF5',
+    crust: '#34D399', // 에메랄드 글레이즈
+    crustHi: '#A7F3D0',
+    outline: '#065F46',
+    skyTop: '#0EA5E9',
+    skyMid: '#BAE6FD',
+    skyBot: '#ECFDF5',
+    hillFar: 'rgba(52, 211, 153, 0.25)',
+    hillNear: 'rgba(110, 231, 183, 0.26)',
+  },
 };
 
 export class DestructibleTerrain {
@@ -101,10 +161,19 @@ export class DestructibleTerrain {
     };
     this.breadImg.src = './assets/bread_texture.jpg?v=35';
 
-    // 실제 베이커리 아일랜드 PNG 4종(버터 식빵, 바게트·크루아상, 도넛·딸기케이크, 초코케이크 성채) 프리로드
+    // 실제 베이커리 아일랜드 PNG 8종 프리로드
     this.activeMapKey = 'bridge';
     this.mapImages = {};
-    for (const key of ['bridge', 'twin_peaks', 'archipelago', 'citadel']) {
+    for (const key of [
+      'bridge',
+      'twin_peaks',
+      'archipelago',
+      'citadel',
+      'matcha_cliff',
+      'honey_waffle',
+      'blueberry_tart',
+      'melon_soda',
+    ]) {
       const img = new Image();
       const entry = { img, loaded: false };
       img.onload = () => {
@@ -114,7 +183,7 @@ export class DestructibleTerrain {
           this.applyBakeryMapImage(key);
         }
       };
-      img.src = `./assets/maps/${key}.png?v=37`;
+      img.src = `./assets/maps/${key}.png?v=38`;
       this.mapImages[key] = entry;
     }
   }
@@ -157,7 +226,16 @@ export class DestructibleTerrain {
     this.mask.fill(0);
     this.ctx.clearRect(0, 0, WORLD.WIDTH, WORLD.HEIGHT);
 
-    const mapPool = ['bridge', 'twin_peaks', 'archipelago', 'citadel'];
+    const mapPool = [
+      'bridge',
+      'twin_peaks',
+      'archipelago',
+      'citadel',
+      'matcha_cliff',
+      'honey_waffle',
+      'blueberry_tart',
+      'melon_soda',
+    ];
     const mapKey =
       preset === 'random'
         ? mapPool[Math.floor(Math.random() * mapPool.length)]
@@ -169,28 +247,40 @@ export class DestructibleTerrain {
     if (mapKey === 'twin_peaks') this.currentBiome = 'glacier';
     else if (mapKey === 'archipelago') this.currentBiome = 'candy';
     else if (mapKey === 'citadel') this.currentBiome = 'volcano';
+    else if (mapKey === 'matcha_cliff') this.currentBiome = 'matcha';
+    else if (mapKey === 'honey_waffle') this.currentBiome = 'waffle';
+    else if (mapKey === 'blueberry_tart') this.currentBiome = 'blueberry';
+    else if (mapKey === 'melon_soda') this.currentBiome = 'melon';
     else this.currentBiome = 'meadow';
 
     if (this.mapImages[mapKey]?.loaded) {
       this.pendingImageApply = false;
       return this.applyBakeryMapImage(mapKey);
     }
-    this.pendingImageApply = true;
+    this.pendingImageApply = Boolean(this.mapImages[mapKey]);
 
     const biomeKeys = Object.keys(BIOMES);
-    let shapeMode = preset;
+    let shapeMode = mapKey;
 
-    if (preset === 'random') {
-      const shapes = ['single_hills', 'split_islands', 'triple_islands', 'cliff_steps'];
-      shapeMode = shapes[Math.floor(Math.random() * shapes.length)];
-      this.currentBiome = biomeKeys[Math.floor(Math.random() * biomeKeys.length)];
-    } else if (preset === 'twin_peaks') {
+    if (mapKey === 'twin_peaks') {
       this.currentBiome = 'glacier';
-    } else if (preset === 'archipelago') {
+    } else if (mapKey === 'archipelago') {
       this.currentBiome = 'candy';
       shapeMode = 'triple_islands';
-    } else if (preset === 'citadel') {
+    } else if (mapKey === 'citadel') {
       this.currentBiome = 'volcano';
+    } else if (mapKey === 'matcha_cliff') {
+      this.currentBiome = 'matcha';
+      shapeMode = 'cliff_steps';
+    } else if (mapKey === 'honey_waffle') {
+      this.currentBiome = 'waffle';
+      shapeMode = 'split_islands';
+    } else if (mapKey === 'blueberry_tart') {
+      this.currentBiome = 'blueberry';
+      shapeMode = 'triple_islands';
+    } else if (mapKey === 'melon_soda') {
+      this.currentBiome = 'melon';
+      shapeMode = 'single_hills';
     } else {
       this.currentBiome = 'meadow';
     }

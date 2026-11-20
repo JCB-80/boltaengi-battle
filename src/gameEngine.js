@@ -9,9 +9,11 @@ import { computeAIShot } from './ai.js';
 const Matter = window.Matter;
 
 export class GameEngine {
-  constructor({ renderer, onHudUpdate }) {
+  constructor({ renderer, onHudUpdate, onRemoteAction = null }) {
     this.renderer = renderer;
     this.onHudUpdate = onHudUpdate;
+    this.onRemoteAction = onRemoteAction;
+    this.isRemoteMatch = false;
     this.audio = new ToyAudio();
 
     this.matterEngine = Matter.Engine.create({
@@ -64,6 +66,8 @@ export class GameEngine {
     };
     this.turnNumber = 1;
     this.phase = 'AIM'; // 'AIM' | 'FLIGHT' | 'SETTLE' | 'GAME_OVER'
+    this.turnTimerFrames = 20 * 60;
+    this.turnTimeLeft = 20;
     this.activeActor = null;
     this.winnerText = '';
 
@@ -396,6 +400,8 @@ export class GameEngine {
     this.activeActor.fuel = this.activeActor.powerUpTurns > 0 ? 150 : this.activeActor.maxFuel;
     this.activeActor.useUltimate = false;
     this.phase = 'AIM';
+    this.turnTimerFrames = 20 * 60;
+    this.turnTimeLeft = 20;
     this.dragState.active = false;
 
     this.spawnFloatingText(
@@ -430,10 +436,83 @@ export class GameEngine {
   /**
    * 현재 액터의 캡슐탄 발사 (반동 · 발사 진동 · 전술 스킬 · 궁극탄 처리)
    */
+  playLaunchJuice(actor, muzzle, { isHeavy = false, isUltimate = false } = {}) {
+    const powerRatio = Math.max(0.15, Math.min(1, (actor.aimPower || 60) / 100));
+    const vibMs = isUltimate ? 70 : powerRatio >= 0.75 || isHeavy ? 45 : 25;
+    try {
+      window.AndroidBridge?.vibrate?.(vibMs);
+      navigator.vibrate?.(vibMs);
+    } catch {
+      // ignore
+    }
+
+    actor.recoil = isUltimate ? 1.35 : isHeavy ? 1.15 : 0.9 + powerRatio * 0.25;
+    const launchShake = isUltimate
+      ? 14
+      : isHeavy
+        ? 10
+        : 4.5 + powerRatio * 5.5;
+    this.renderer.addShake(launchShake);
+    if (isUltimate || isHeavy || powerRatio >= 0.7) {
+      this.renderer.addFlash(isUltimate ? '#FDBA74' : '#FEF08A', isUltimate ? 0.18 : 0.1);
+      if (!this.isRemoteMatch) {
+        this.hitstopFrames = Math.max(this.hitstopFrames, isUltimate ? 3 : 1);
+      }
+    }
+
+    this.audio.playLaunch(powerRatio, isHeavy || isUltimate);
+    this.shockwaves.push({
+      x: muzzle.x,
+      y: muzzle.y,
+      r: 4,
+      maxR: isUltimate ? 48 : isHeavy ? 38 : 26 + powerRatio * 10,
+      alpha: 0.92,
+      color: isUltimate ? '#F97316' : '#FEF08A',
+    });
+    this.shockwaves.push({
+      x: muzzle.x,
+      y: muzzle.y,
+      r: 2,
+      maxR: isUltimate ? 28 : 18,
+      alpha: 0.85,
+      color: '#FFFFFF',
+    });
+    // 포구 전방 방향성 스파크 + 연기 분출
+    const rad = actor.getFireAngleRad ? actor.getFireAngleRad() : -Math.PI * 0.25;
+    const sparkCount = isUltimate ? 24 : isHeavy ? 18 : 14;
+    for (let i = 0; i < sparkCount; i++) {
+      const spread = (Math.random() - 0.5) * 0.65;
+      const spd = 2.6 + Math.random() * (4.2 + powerRatio * 3.5);
+      this.particles.push({
+        x: muzzle.x,
+        y: muzzle.y,
+        vx: Math.cos(rad + spread) * spd,
+        vy: Math.sin(rad + spread) * spd,
+        size: 2.2 + Math.random() * 3.4,
+        color: i % 3 === 0 ? '#FFFFFF' : isUltimate ? '#FB923C' : '#FDE047',
+        life: 16 + Math.floor(Math.random() * 14),
+        maxLife: 30,
+        gravity: 0.12,
+      });
+    }
+  }
+
   fireActiveActor() {
     if (this.phase !== 'AIM' || !this.activeActor || !this.activeActor.alive) return false;
 
     const actor = this.activeActor;
+    if (this.isRemoteMatch) {
+      const muzzle = actor.getMuzzlePosition();
+      this.playLaunchJuice(actor, muzzle, { isHeavy: actor.useUltimate, isUltimate: actor.useUltimate });
+      this.onRemoteAction?.({
+        type: 'FIRE',
+        elevation: actor.aimElevation,
+        power: actor.aimPower,
+        facing: actor.facing,
+        shellKey: actor.selectedShell,
+      });
+      return true;
+    }
     const shellSpec = SHELLS[actor.selectedShell] || SHELLS.ACORN_SPLIT;
     const skillSpec = SKILL_MODES[actor.skillMode] || SKILL_MODES.NORMAL;
     const isUltimate = actor.useUltimate && actor.ultGauge >= 100;
@@ -525,29 +604,17 @@ export class GameEngine {
 
     this.projectiles.push(proj);
 
-    // 발사 손맛: 통통카 스프링 반동 + 포구 폭발 연기 + 발사 화면 진동!
-    actor.recoil = isUltimate ? 1.15 : isHeavySkill ? 0.95 : 0.65;
-    const launchShake = isUltimate
-      ? 11
-      : isHeavySkill
-        ? 7.5
-        : 2.2 + (actor.aimPower / 100) * 3.0;
-    this.renderer.addShake(launchShake);
-
-    this.audio.playLaunch(actor.aimPower / 100, isHeavySkill);
-    this.spawnBurst(muzzle.x, muzzle.y, isUltimate ? '#F97316' : '#FEF08A', isHeavySkill ? 18 : 10, 4.0);
-    this.shockwaves.push({
-      x: muzzle.x,
-      y: muzzle.y,
-      r: 4,
-      maxR: isHeavySkill ? 34 : 20,
-      alpha: 0.75,
-      color: isUltimate ? '#F97316' : '#FEF08A',
-    });
+    // 발사 손맛: 탄성 반동 + 진동 + 포구 충격파 2중 링 + 전방 스파크 콘 + 카메라 킥!
+    this.playLaunchJuice(actor, muzzle, { isHeavy: isHeavySkill, isUltimate });
   }
 
   triggerAirSkill() {
     if (this.phase !== 'FLIGHT') return false;
+    if (this.isRemoteMatch) {
+      this.audio.playAirTrigger();
+      this.onRemoteAction?.({ type: 'AIR_TRIGGER' });
+      return true;
+    }
     let triggeredAny = false;
     const newlySpawned = [];
 
@@ -587,14 +654,27 @@ export class GameEngine {
       this.audio.playHeavyImpact();
       this.renderer.addShake(isUltimate ? 26 : 16);
       this.renderer.addFlash(isUltimate ? '#FDBA74' : '#FEF08A', isUltimate ? 0.42 : 0.22);
-      this.hitstopFrames = isUltimate ? 4 : 2;
+      this.hitstopFrames = isUltimate ? 5 : 3;
     } else {
       this.audio.playExplosion(radius);
-      this.renderer.addShake(Math.min(13, radius * 0.2));
+      this.renderer.addShake(Math.min(16, radius * 0.28));
+      if (customLabel) {
+        this.renderer.addFlash('#FEF3C7', 0.16);
+        this.hitstopFrames = 2;
+      }
     }
 
-    // 1) 지형 실시간 원형 굴착
-    this.terrain.carveCrater(cx, cy, radius);
+    // 1) 지형 실시간 원형 굴착 (실제 땅에 닿아 지형이 파였을 때만 진동 — 공중 이탈 시 진동 없음)
+    const carvedCells = this.terrain.carveCrater(cx, cy, radius);
+    if (carvedCells > 0) {
+      const vibMs = isUltimate || isHeavySkill ? 120 : 60;
+      try {
+        window.AndroidBridge?.vibrate?.(vibMs);
+        navigator.vibrate?.(vibMs);
+      } catch {
+        // ignore vibration errors
+      }
+    }
 
     // 2) 물리 블록 충격파 및 연쇄 폭약통 유폭 체크
     this.structures.applyExplosion(
@@ -729,7 +809,7 @@ export class GameEngine {
         const winCart = survivors[0];
         const dropWin = this.carts.some((c) => !c.alive && c.droppedOut && c.teamId !== winCart.teamId);
         this.winnerText = dropWin
-          ? `${winCart.displayName} 드롭아웃 완승!`
+          ? `${winCart.displayName} 추락 완승!`
           : `${winCart.displayName} 승리!`;
       }
       if (this.carts[0]?.alive) {
@@ -745,6 +825,62 @@ export class GameEngine {
 
   tick(heldKeys) {
     this.frameCount++;
+
+    if (this.isRemoteMatch) {
+      if (this.phase === 'AIM' && this.activeActor?.controller === 'human' && this.frameCount % 4 === 0) {
+        if (heldKeys.has('ArrowLeft') || heldKeys.has('KeyA') || heldKeys.has('UI_LEFT')) {
+          this.onRemoteAction?.({ type: 'MOVE', dir: -1 });
+        } else if (heldKeys.has('ArrowRight') || heldKeys.has('KeyD') || heldKeys.has('UI_RIGHT')) {
+          this.onRemoteAction?.({ type: 'MOVE', dir: 1 });
+        }
+      }
+      // 60fps 부드러운 온라인 캐릭터 위치 보간 + 발사체 외삽 이동
+      for (const c of this.carts) {
+        if (typeof c._targetX === 'number' && typeof c._targetY === 'number') {
+          const dx = c._targetX - c.x;
+          const dy = c._targetY - c.y;
+          if (Math.hypot(dx, dy) > 120) {
+            c.x = c._targetX;
+            c.y = c._targetY;
+          } else {
+            c.x += dx * 0.35;
+            c.y += dy * 0.35;
+          }
+        }
+      }
+      for (const p of this.projectiles) {
+        if (!p.active) continue;
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += WORLD.GRAVITY;
+        p.rotation = (p.rotation || 0) + 0.22;
+        if (this.frameCount % 2 === 0) {
+          p.trail.push({ x: p.x, y: p.y, alpha: 1.0 });
+          if (p.trail.length > 22) p.trail.shift();
+        }
+      }
+      this.updateVisualEffects();
+      this.renderer.render({
+        terrain: this.terrain,
+        structures: this.structures,
+        carts: this.carts,
+        projectiles: this.projectiles,
+        particles: this.particles,
+        shockwaves: this.shockwaves,
+        floatingTexts: this.floatingTexts,
+        wind: this.wind,
+        weather: this.weather,
+        tornado: this.tornado,
+        skyBox: this.skyBox,
+        fixedBoxes: this.fixedBoxes,
+        pityCutin: this.pityCutin,
+        phase: this.phase,
+        activeActor: this.activeActor,
+        dragState: this.dragState,
+        frameCount: this.frameCount,
+      });
+      return;
+    }
 
     // 강한 스킬 임팩트 히트스탑 (찰나의 정지로 타격감 극대화)
     if (this.hitstopFrames > 0) {
@@ -846,7 +982,7 @@ export class GameEngine {
         this.spawnFloatingText(
           Math.min(WORLD.WIDTH - 120, Math.max(120, fallenCart.x)),
           WORLD.SEA_LEVEL - 42,
-          `${fallenCart.displayName} 드롭아웃!!`,
+          `${fallenCart.displayName} 구름 아래로 추락!!`,
           '#38BDF8',
           23
         );
@@ -860,6 +996,28 @@ export class GameEngine {
         this.enterSettlePhase();
       } else if (this.activeActor.controller === 'human') {
         this.handleHumanContinuousInput(heldKeys);
+        if (this.turnTimerFrames > 0) {
+          this.turnTimerFrames--;
+          const sec = Math.max(0, Math.ceil(this.turnTimerFrames / 60));
+          if (sec !== this.turnTimeLeft) {
+            this.turnTimeLeft = sec;
+            if (sec >= 1 && sec <= 5) {
+              this.audio.playMove?.();
+            }
+            this.notifyHud();
+          }
+          if (this.turnTimerFrames <= 0) {
+            this.spawnFloatingText(
+              this.activeActor.x,
+              this.activeActor.y - 78,
+              '⏱ 시간 초과! 턴 넘김!',
+              '#FB7185',
+              19
+            );
+            this.activeActor.timelineTick += 100;
+            this.enterSettlePhase();
+          }
+        }
       } else {
         this.stepAITurn();
       }
@@ -950,26 +1108,25 @@ export class GameEngine {
           continue;
         }
 
-        // 절벽 밖으로 떨어져 죽지 않도록, 안전 육지 방향(섬 안쪽)으로 살짝만 밀어 조준만 무효화
-        cart.tornadoImmuneFrames = 140;
-        const inwardDir = cart.x < WORLD.WIDTH * 0.5 ? 1 : -1;
-        const canGoTornadoDir =
-          this.terrain.findTopSurface(cart.x + (t.vx >= 0 ? 55 : -55)) !== null;
-        const pushDir = canGoTornadoDir ? (t.vx >= 0 ? 1 : -1) : inwardDir;
-
-        cart.applyKnockback(pushDir * 2.5, -3.3);
+        // 회오리는 캐릭터를 밀어 떨어뜨리지 않고(위치 고정!), 기존 조준(각도·파워)만 리셋!
+        cart.tornadoImmuneFrames = 300;
         cart.setMood('panic', 110);
 
-        // 기존 맞춰둔 영점 조준 무효화!
+        // 기존 맞춰둔 영점 조준(각도 · 이전 파워) 완전 리셋! (똑같이 못 쏘도록 최소 ±14도 / ±15% 강제 변경)
         cart.lastElevation = null;
         cart.lastPower = null;
-        cart.aimElevation = Math.min(80, Math.max(15, cart.aimElevation + Math.round((Math.random() - 0.5) * 24)));
-        cart.aimPower = Math.min(95, Math.max(25, cart.aimPower + Math.round((Math.random() - 0.5) * 24)));
+        const elevDelta = 14 + Math.floor(Math.random() * 14);
+        const elevDir = cart.aimElevation + elevDelta <= 80 ? (Math.random() < 0.5 && cart.aimElevation - elevDelta >= 15 ? -1 : 1) : -1;
+        cart.aimElevation = Math.min(80, Math.max(15, cart.aimElevation + elevDir * elevDelta));
+
+        const powerDelta = 15 + Math.floor(Math.random() * 15);
+        const powerDir = cart.aimPower + powerDelta <= 95 ? (Math.random() < 0.5 && cart.aimPower - powerDelta >= 20 ? -1 : 1) : -1;
+        cart.aimPower = Math.min(95, Math.max(20, cart.aimPower + powerDir * powerDelta));
 
         this.renderer.addShake(11);
         this.audio.playBounce();
         this.spawnBurst(cart.x, cart.y - 20, '#A5F3FC', 18, 5.2);
-        this.spawnFloatingText(cart.x, cart.y - 72, '🌪️ 위치 이동! 조준 무효!', '#38BDF8', 20);
+        this.spawnFloatingText(cart.x, cart.y - 72, '🌪️ 회오리! 각도·파워 리셋!', '#38BDF8', 20);
         this.notifyHud();
       }
     }
@@ -1077,7 +1234,7 @@ export class GameEngine {
               rewardText = '🔥 랜덤 선물! 궁극기 +35% 충전!';
             } else {
               owner.fuel = owner.maxFuel;
-              rewardText = '💨 랜덤 선물! 이동 연료 100%!';
+              rewardText = '💨 랜덤 선물! 남은 걸음 20걸음 충전!';
             }
           }
           this.audio.playSkillCharge();
@@ -1121,6 +1278,9 @@ export class GameEngine {
           this.notifyHud();
         },
         onDetonate: (p, x, y, directHit) => {
+          if (directHit || p.isUltimate) {
+            this.audio.playApplause();
+          }
           this.detonateAt(
             x,
             y,
@@ -1128,7 +1288,7 @@ export class GameEngine {
             directHit ? Math.round(p.damage * 1.15) : p.damage,
             p.spec.blockBonus,
             p.isUltimate ? '#F97316' : p.spec.color,
-            p.isUltimate ? '🔥 궁극기 명중!' : directHit ? '직격 명중!' : null,
+            p.isUltimate ? '🔥 궁극기 명중!' : directHit ? '👏 정통 직격!' : null,
             {
               isHeavySkill: p.isHeavySkill,
               isUltimate: p.isUltimate,
@@ -1223,6 +1383,7 @@ export class GameEngine {
   notifyHud() {
     this.onHudUpdate?.({
       turnNumber: this.turnNumber,
+      turnTimeLeft: this.turnTimeLeft,
       wind: this.wind,
       weather: this.weather,
       tornadoActive: this.tornado.alertFrames > 0,

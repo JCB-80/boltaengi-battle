@@ -18,6 +18,7 @@ import {
   searchKoreanSchools,
 } from './social.js?v=30';
 import { initBannerAd, runAdCountdown } from './ads.js?v=46';
+import { OnlineBattleClient } from './onlineAdapter.js';
 
 const canvas = document.getElementById('gameCanvas');
 const renderer = new GameRenderer(canvas);
@@ -138,17 +139,64 @@ const ui = {
   hudRightHp: document.getElementById('hudRightHp'),
   shellCycleBtn: document.getElementById('shellCycleBtn'),
   shellPopover: document.getElementById('shellPopover'),
+
+  createOnlineRoomBtn: document.getElementById('createOnlineRoomBtn'),
+  onlineMaxPlayers: document.getElementById('onlineMaxPlayers'),
+  onlineRoomTitleInput: document.getElementById('onlineRoomTitleInput'),
+  onlineInviteInput: document.getElementById('onlineInviteInput'),
+  joinOnlineRoomBtn: document.getElementById('joinOnlineRoomBtn'),
+  onlineRoomStatusBox: document.getElementById('onlineRoomStatusBox'),
+  onlineRoomStatusText: document.getElementById('onlineRoomStatusText'),
+  approveOnlineRoomBtn: document.getElementById('approveOnlineRoomBtn'),
+  cancelOnlineRoomBtn: document.getElementById('cancelOnlineRoomBtn'),
+  lanOpenRoomsList: document.getElementById('lanOpenRoomsList'),
+  schoolOnlineMaxPlayers: document.getElementById('schoolOnlineMaxPlayers'),
+  schoolRoomTitleInput: document.getElementById('schoolRoomTitleInput'),
+  createClassOnlineRoomBtn: document.getElementById('createClassOnlineRoomBtn'),
+  schoolOpenRoomsList: document.getElementById('schoolOpenRoomsList'),
+  schoolTopBanner: document.getElementById('schoolTopBanner'),
+  lbScopeBtns: document.querySelectorAll('.lb-scope-btn'),
+  leaderboardList: document.getElementById('leaderboardList'),
 };
 
 const heldKeys = new Set();
+const onlineClient = new OnlineBattleClient();
 
 const engine = new GameEngine({
   renderer,
   onHudUpdate: syncHud,
+  onRemoteAction: (action) => {
+    if (engine.isRemoteMatch) {
+      onlineClient.sendAction(action).catch(() => {});
+    }
+  },
 });
 
+let prevAlertWeather = 'CLEAR';
+let rainBannerUntil = 0;
+let windBannerUntil = 0;
+let tornadoBannerUntil = 0;
+let tipBannerUntil = 0;
+let lastWindAlertKey = '';
+let prevTornadoActive = false;
+let lastTipTurnKey = '';
+let alertDismissTimer = null;
+
+function scheduleAlertCleanup() {
+  if (alertDismissTimer) clearTimeout(alertDismissTimer);
+  alertDismissTimer = setTimeout(() => {
+    const now = Date.now();
+    if (ui.envAlertStack) {
+      if (now >= rainBannerUntil) ui.envAlertStack.querySelectorAll('.env-alert.rain').forEach((el) => el.remove());
+      if (now >= windBannerUntil) ui.envAlertStack.querySelectorAll('.env-alert.wind').forEach((el) => el.remove());
+      if (now >= tornadoBannerUntil) ui.envAlertStack.querySelectorAll('.env-alert.tornado').forEach((el) => el.remove());
+      if (now >= tipBannerUntil) ui.envAlertStack.querySelectorAll('.env-alert.tip').forEach((el) => el.remove());
+    }
+  }, 3050);
+}
+
 function syncHud(state) {
-  const { turnNumber, wind, weather, tornadoActive, phase, activeActor, carts, projectiles, winnerText, muted, rankInfo, cosmeticEnabled, matchLabel } = state;
+  const { turnNumber, turnTimeLeft, wind, weather, tornadoActive, phase, activeActor, carts, projectiles, winnerText, muted, rankInfo, cosmeticEnabled, matchLabel } = state;
 
   // 내 턴이 돌아오거나 게임 종료 시 돋보기 쓰담기 오버레이 자동 닫기
   const isHumanAimNow = phase === 'AIM' && activeActor?.controller === 'human';
@@ -175,7 +223,12 @@ function syncHud(state) {
     ui.hudRightName.textContent = oppCart.spec?.name || oppCart.displayName;
     ui.hudRightHp.textContent = `HP ${Math.max(0, oppCart.hp)}`;
   }
-  ui.turnTimelineBadge.textContent = matchLabel ? `${matchLabel} · T${turnNumber}` : `TURN ${turnNumber}`;
+  const timerText = phase === 'AIM' && Number.isFinite(turnTimeLeft) ? ` · ⏱ ${turnTimeLeft}초` : '';
+  const compactHud = window.innerHeight <= 540;
+  ui.turnTimelineBadge.textContent =
+    matchLabel && !compactHud ? `${matchLabel} · T${turnNumber}${timerText}` : `T${turnNumber}${timerText}`;
+  ui.turnTimelineBadge.classList.toggle('urgent', phase === 'AIM' && turnTimeLeft <= 5);
+  ui.turnTimelineBadge.style.color = '';
 
   // 2) 바람 게이지 업데이트
   const absWind = Math.abs(wind);
@@ -199,33 +252,92 @@ function syncHud(state) {
   ui.muteBtn.textContent = muted ? '🔇' : '🔊';
 
   if (weather === 'RAIN') {
-    ui.weatherToggleBtn.textContent = '🌧️';
+    ui.weatherToggleBtn.textContent = '🌧️ 비(바람+50%)';
     ui.weatherToggleBtn.classList.add('rain');
   } else {
-    ui.weatherToggleBtn.textContent = '☀️';
+    ui.weatherToggleBtn.textContent = '☀️ 맑음';
     ui.weatherToggleBtn.classList.remove('rain');
   }
 
-  // 2.5) 환경 & 재해 시각적 경고 배너 렌더링 (귀여운 동글체 + 말랑 스티커)
+  // 2.5) 환경 & 재해 시각적 경고 배너 렌더링 (모든 경보·팁은 3초만 표시 후 자동 사라짐)
+  const nowMs = Date.now();
   const alerts = [];
   if (tornadoActive) {
-    alerts.push({
-      cls: 'tornado',
-      text: '🌪️ 앗! 빙글빙글 회오리 주의보~ 날아가면 조준이 풀리니 꼭 붙잡아!',
-    });
+    if (!prevTornadoActive) {
+      tornadoBannerUntil = nowMs + 3000;
+      scheduleAlertCleanup();
+    }
+    if (nowMs < tornadoBannerUntil) {
+      alerts.push({
+        cls: 'tornado',
+        text: '🌪️ 회오리 주의! 구멍으로 대피하세요!',
+      });
+    }
+  } else {
+    tornadoBannerUntil = 0;
   }
+  prevTornadoActive = Boolean(tornadoActive);
+
   if (weather === 'RAIN') {
-    alerts.push({
-      cls: 'rain',
-      text: '🌧️ 주륵주륵 비가 와요! 구슬이 촉촉해져서 멀리 못 날아가요~ (사거리 -20%)',
-    });
+    if (prevAlertWeather !== 'RAIN') {
+      rainBannerUntil = nowMs + 3000;
+      scheduleAlertCleanup();
+    }
+    if (nowMs < rainBannerUntil) {
+      alerts.push({
+        cls: 'rain',
+        text: '🌧️ 비가 와요! (사거리 -20%)',
+      });
+    }
+  } else {
+    rainBannerUntil = 0;
   }
+  prevAlertWeather = weather;
+
   if (Math.abs(wind) >= 7.5) {
     const dirTxt = wind > 0 ? '우풍 ▶' : '◀ 좌풍';
-    alerts.push({
-      cls: 'wind',
-      text: `💨 바람이 쌩쌩! (${dirTxt} ${Math.abs(wind).toFixed(1)}) 역풍이면 구슬이 느려지고 블록도 흔들려요~`,
-    });
+    const wKey = `${turnNumber}:${dirTxt}`;
+    if (wKey !== lastWindAlertKey) {
+      lastWindAlertKey = wKey;
+      windBannerUntil = nowMs + 3000;
+      scheduleAlertCleanup();
+    }
+    if (nowMs < windBannerUntil) {
+      alerts.push({
+        cls: 'wind',
+        text: `💨 강풍 경보 (${dirTxt} ${Math.abs(wind).toFixed(1)})`,
+      });
+    }
+  } else {
+    lastWindAlertKey = '';
+    windBannerUntil = 0;
+  }
+
+  // 내 턴 조준 시작 시 3초간만 1줄 탄도 팁 표시 후 자동 숨김
+  if (phase === 'AIM' && activeActor?.controller === 'human') {
+    const tKey = `${turnNumber}:${activeActor.slotIndex}:${weather}:${Math.round(wind * 10)}`;
+    if (tKey !== lastTipTurnKey) {
+      lastTipTurnKey = tKey;
+      tipBannerUntil = nowMs + 3000;
+      scheduleAlertCleanup();
+    }
+    if (nowMs < tipBannerUntil) {
+      const windWithMe = wind * (activeActor.facing || 1);
+      const windName = wind >= 0 ? '우풍' : '좌풍';
+      let tipText = '';
+      if (weather === 'RAIN' && windWithMe < -2.0) {
+        tipText = `💡 팁: 비 + ${windName}(맞바람)! 파워 +20% 추천`;
+      } else if (weather === 'RAIN') {
+        tipText = '💡 팁: 비 때문에 무거워요! 파워 +10~15% 추천';
+      } else if (windWithMe >= 2.5) {
+        tipText = `💡 팁: ${windName}(순풍)! 파워 -10% 추천`;
+      } else if (windWithMe <= -2.5) {
+        tipText = `💡 팁: ${windName}(맞바람)! 파워 +10~15% 추천`;
+      } else {
+        tipText = '💡 팁: 화면을 뒤로 당겼다 놓으면 발사돼요!';
+      }
+      alerts.push({ cls: 'tip', text: tipText });
+    }
   }
 
   ui.canvasFrame.classList.toggle('tornado-warning', Boolean(tornadoActive));
@@ -235,9 +347,15 @@ function syncHud(state) {
 
   // 3) 게임 오버 모달
   if (phase === 'GAME_OVER') {
-    ui.winnerHeadline.textContent = winnerText;
+    if (!matchOutcomeRecorded) {
+      matchOutcomeRecorded = true;
+      recordCurrentMatchOutcome(state);
+    }
+    const statsTxt = formatWinRateText(getCachedAccountStats());
+    ui.winnerHeadline.textContent = `${winnerText} · ${statsTxt}`;
     ui.gameOverModal.classList.remove('hidden');
   } else {
+    matchOutcomeRecorded = false;
     ui.gameOverModal.classList.add('hidden');
   }
 
@@ -274,7 +392,8 @@ function syncHud(state) {
 
   if (refActor) {
     const fuelPct = Math.max(0, Math.round((refActor.fuel / refActor.maxFuel) * 100));
-    ui.fuelText.textContent = `연료 ${fuelPct}%`;
+    const stepsLeft = Math.ceil(Math.max(0, refActor.fuel) / 5);
+    ui.fuelText.textContent = `남은 걸음 ${stepsLeft}걸음`;
     ui.fuelBarFill.style.width = `${fuelPct}%`;
 
     ui.angleValueText.textContent = `${refActor.aimElevation}°`;
@@ -460,16 +579,6 @@ ui.petMagnifierCanvas?.addEventListener('pointercancel', releasePetPinch);
 canvas.addEventListener('pointerdown', (e) => {
   engine.audio.ensureContext();
   const pt = toWorldCoords(e.clientX, e.clientY);
-  const isMyTurn = engine.phase === 'AIM' && engine.activeActor?.controller === 'human';
-
-  // 내 턴이 아닐 때 내 캐릭터를 터치하면 돋보기 확대 & 볼꼬집기 교감 모드 오픈!
-  if (!isMyTurn) {
-    const myCart = engine.carts.find((c) => c.alive && c.controller === 'human');
-    if (myCart && Math.hypot(pt.x - myCart.x, pt.y - (myCart.y - 28)) <= 68) {
-      openPetMagnifier(myCart);
-      return;
-    }
-  }
 
   // 비행 중 클릭 시 즉시 에어 트리거 기폭!
   if (engine.phase === 'FLIGHT' && engine.activeActor?.controller === 'human') {
@@ -477,9 +586,14 @@ canvas.addEventListener('pointerdown', (e) => {
     return;
   }
 
+  const isMyTurn = engine.phase === 'AIM' && engine.activeActor?.controller === 'human';
   if (!isMyTurn) return;
 
-  canvas.setPointerCapture(e.pointerId);
+  try {
+    canvas.setPointerCapture(e.pointerId);
+  } catch {
+    // ignore pointer capture errors
+  }
   pointerAnchor = pt;
 
   const muzzle = engine.activeActor.getMuzzlePosition();
@@ -657,12 +771,120 @@ function getSafeProfile() {
   );
 }
 
+let matchOutcomeRecorded = false;
+
+function getStatsStorageKey(userId) {
+  return `puffpuff_stats_${String(userId || 'guest').trim().toLowerCase()}`;
+}
+
+function getCachedAccountStats(userId = loadUserProfile()?.userId) {
+  try {
+    const raw = localStorage.getItem(getStatsStorageKey(userId));
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const wins = Math.max(0, Number(parsed.wins) || 0);
+      const matches = Math.max(0, Number(parsed.matches) || 0);
+      const score = typeof parsed.score === 'number' ? Math.max(0, parsed.score) : wins * 100 + Math.max(0, matches - wins) * 10;
+      return { wins, matches, score };
+    }
+  } catch {
+    // ignore
+  }
+  return { wins: 0, matches: 0, score: 0 };
+}
+
+function saveCachedAccountStats(userId, stats) {
+  if (!userId || !stats) return;
+  try {
+    const wins = Math.max(0, Number(stats.wins) || 0);
+    const matches = Math.max(0, Number(stats.matches) || 0);
+    const score = typeof stats.score === 'number' ? Math.max(0, stats.score) : wins * 100 + Math.max(0, matches - wins) * 10;
+    localStorage.setItem(
+      getStatsStorageKey(userId),
+      JSON.stringify({ wins, matches, score })
+    );
+  } catch {
+    // ignore
+  }
+}
+
+function formatWinRateText(stats) {
+  const wins = Math.max(0, Number(stats?.wins) || 0);
+  const matches = Math.max(0, Number(stats?.matches) || 0);
+  const score = typeof stats?.score === 'number' ? Math.max(0, stats.score) : wins * 100 + Math.max(0, matches - wins) * 10;
+  const pct = matches > 0 ? Math.round((wins / matches) * 100) : 0;
+  return `${score}점 · ${matches}전 ${wins}승 (${pct}%)`;
+}
+
+async function syncProfileWithServer(prof) {
+  if (!prof?.userId) return;
+  try {
+    const acc = await onlineClient.syncAccount(prof);
+    if (acc) {
+      saveCachedAccountStats(prof.userId, { wins: acc.wins, matches: acc.matches, score: acc.score });
+      refreshProfileUi();
+      refreshLeaderboard?.(true);
+    }
+  } catch {
+    // 오프라인/서버 미연결 시 로컬 캐시 유지
+  }
+}
+
+async function recordCurrentMatchOutcome(state) {
+  const prof = loadUserProfile();
+  if (!prof?.userId) return;
+  const carts = Array.isArray(state?.carts) ? state.carts : [];
+  const aliveHumans = carts.filter((c) => c.alive && c.controller === 'human');
+  const won = aliveHumans.length > 0;
+
+  if (engine.isRemoteMatch) {
+    // 온라인 매치는 server.mjs settleRoomRewardsIfEnded가 이미 서버 계정에 반영함
+    setTimeout(async () => {
+      try {
+        const acc = await onlineClient.fetchMyAccount();
+        if (acc) {
+          saveCachedAccountStats(prof.userId, { wins: acc.wins, matches: acc.matches });
+          refreshProfileUi();
+          if (!ui.gameOverModal.classList.contains('hidden')) {
+            ui.winnerHeadline.textContent = `${state.winnerText} · ${formatWinRateText(acc)}`;
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }, 300);
+    return;
+  }
+
+  const prev = getCachedAccountStats(prof.userId);
+  const optimistic = {
+    wins: prev.wins + (won ? 1 : 0),
+    matches: prev.matches + 1,
+  };
+  saveCachedAccountStats(prof.userId, optimistic);
+  refreshProfileUi();
+  try {
+    const acc = await onlineClient.recordLocalMatchReward({
+      win: won,
+      deltaXp: won ? 80 : 25,
+    });
+    if (acc) {
+      saveCachedAccountStats(prof.userId, { wins: acc.wins, matches: acc.matches, score: acc.score });
+      refreshProfileUi();
+      refreshLeaderboard?.(true);
+    }
+  } catch {
+    // ignore
+  }
+}
+
 function refreshProfileUi() {
   const prof = loadUserProfile();
   if (prof) {
-    ui.profileSummaryText.textContent = `🏫 ${shortSchoolLabel(prof.schoolName)} ${prof.className} · @${prof.userId} (${prof.nickname})`;
+    const winTxt = formatWinRateText(getCachedAccountStats(prof.userId));
+    ui.profileSummaryText.textContent = `🏫 ${shortSchoolLabel(prof.schoolName)} ${prof.className} · @${prof.userId} (${prof.nickname}) · 🏆 ${winTxt}`;
     ui.openProfileBtn.textContent = '✏️ 내 정보';
-    ui.mySchoolClassLabel.textContent = `${prof.schoolName} · ${prof.className} (${prof.nickname})`;
+    ui.mySchoolClassLabel.textContent = `${prof.schoolName} · ${prof.className} (${prof.nickname}) · ${winTxt}`;
   } else {
     ui.profileSummaryText.textContent = '학교 · 반 정보 등록 필요';
     ui.openProfileBtn.textContent = '✏️ 내 정보';
@@ -969,8 +1191,12 @@ function buildHubMatchSpec() {
 }
 
 function launchMatchSpec(spec) {
+  onlineMatchEntered = false;
+  onlineClient.clearSession();
+  engine.isRemoteMatch = false;
+  ui.onlineRoomStatusBox?.classList.add('hidden');
   activeCustomMatch = spec;
-  engine.audio.stopLobbyBgm();
+  window.AndroidBridge?.setOrientation?.('landscape');
   ui.lobbyScreen.classList.add('hidden');
   ui.gameScreen.classList.remove('hidden');
   engine.startMatch({
@@ -981,9 +1207,14 @@ function launchMatchSpec(spec) {
     customRoster: spec.customRoster,
     matchLabel: spec.matchLabel,
   });
+  engine.audio.startBattleBgm(engine.terrain?.activeMapKey || ui.mapSelect.value);
 }
 
 function restartWithCurrentOptions() {
+  onlineMatchEntered = false;
+  onlineClient.clearSession();
+  engine.isRemoteMatch = false;
+  ui.onlineRoomStatusBox?.classList.add('hidden');
   if (ui.rewardAdBtn) {
     ui.rewardAdBtn.disabled = false;
     ui.rewardAdBtn.textContent = '📺 광고 보고 +50 XP';
@@ -1001,6 +1232,7 @@ function restartWithCurrentOptions() {
     customRoster: spec.customRoster,
     matchLabel: spec.matchLabel,
   });
+  engine.audio.startBattleBgm(engine.terrain?.activeMapKey || ui.mapSelect.value);
 }
 
 function enterGameFromLobby() {
@@ -1035,9 +1267,20 @@ function enterGameFromLobby() {
 }
 
 function returnToLobby() {
+  onlineMatchEntered = false;
+  onlineClient.clearSession();
+  engine.isRemoteMatch = false;
+  engine.phase = 'IDLE';
+  engine.projectiles = [];
+  ui.gameOverModal?.classList.add('hidden');
+  ui.onlineRoomStatusBox?.classList.add('hidden');
+  window.AndroidBridge?.setOrientation?.('portrait');
   ui.gameScreen.classList.add('hidden');
   ui.lobbyScreen.classList.remove('hidden');
   engine.audio.startLobbyBgm();
+  lastLanRoomsJson = '';
+  refreshLanOpenRooms();
+  refreshLeaderboard(true);
 }
 
 function updateLobbyBgmBtn() {
@@ -1073,13 +1316,14 @@ ui.profileForm?.addEventListener('submit', (e) => {
   e.preventDefault();
   const gNum = String(ui.profGradeNum.value || '').replace(/\D/g, '') || '3';
   const cNum = String(ui.profClassNum.value || '').replace(/\D/g, '') || '1';
-  saveUserProfile({
+  const savedProf = saveUserProfile({
     userId: ui.profUserId.value,
     nickname: ui.profNickname.value,
     schoolName: ui.profSchool.value,
     className: `${gNum}학년 ${cNum}반`,
   });
   refreshProfileUi();
+  syncProfileWithServer(savedProf);
   renderOpponentSearchList();
   ui.profileModal.classList.add('hidden');
   ui.lobbyScreen.classList.remove('hidden');
@@ -1192,11 +1436,27 @@ for (const pill of ui.searchScopePills) {
 }
 ui.opponentSearchInput?.addEventListener('input', renderOpponentSearchList);
 
-ui.acceptChallengeBtn?.addEventListener('click', () => {
+ui.acceptChallengeBtn?.addEventListener('click', async () => {
   const chg = pendingIncomingChallenge;
   pendingIncomingChallenge = null;
   ui.challengeAlertModal?.classList.add('hidden');
   if (!chg?.from) return;
+
+  if (chg.id && chg.inviteCode) {
+    try {
+      await fetch(`/api/battle/challenges/${chg.id}/respond`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accept: true }),
+      });
+      if (ui.onlineInviteInput) ui.onlineInviteInput.value = chg.inviteCode;
+      ui.joinOnlineRoomBtn?.click();
+    } catch {
+      // fallback ignored
+    }
+    return;
+  }
+
   const prof = getSafeProfile();
   const from = chg.from;
   const playerChar = ui.charSelect.value;
@@ -1212,9 +1472,42 @@ ui.acceptChallengeBtn?.addEventListener('click', () => {
 });
 
 ui.declineChallengeBtn?.addEventListener('click', () => {
+  const chg = pendingIncomingChallenge;
   pendingIncomingChallenge = null;
   ui.challengeAlertModal?.classList.add('hidden');
+  if (chg?.id) {
+    fetch(`/api/battle/challenges/${chg.id}/respond`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accept: false }),
+    }).catch(() => {});
+  }
 });
+
+let lastSeenServerChallengeId = '';
+async function pollServerChallenges() {
+  const myId = loadUserProfile()?.userId || '';
+  if (!myId || ui.lobbyScreen?.classList.contains('hidden')) return;
+  try {
+    const res = await fetch(`/api/battle/challenges/pending?userId=${encodeURIComponent(myId)}`, { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = await res.json();
+    const ch = data.challenge;
+    if (!ch || ch.id === lastSeenServerChallengeId) return;
+    lastSeenServerChallengeId = ch.id;
+    pendingIncomingChallenge = ch;
+    const from = ch.from || {};
+    if (ui.challengeAlertTitle) ui.challengeAlertTitle.textContent = '⚔️ 실시간 대결 요청이 왔어요!';
+    if (ui.challengeAlertText) {
+      ui.challengeAlertText.textContent = `[${shortSchoolLabel(from.schoolName)} ${from.className}] @${from.userId} (${from.nickname})님이 실시간 1:1 대결을 신청했어요!`;
+    }
+    engine.audio.playSkillCharge();
+    ui.challengeAlertModal?.classList.remove('hidden');
+  } catch {
+    // ignore
+  }
+}
+setInterval(pollServerChallenges, 2200);
 
 subscribeChallenges(
   () => loadUserProfile()?.userId || '',
@@ -1233,6 +1526,7 @@ subscribeChallenges(
 );
 
 refreshProfileUi();
+syncProfileWithServer(loadUserProfile());
 renderFriendChips();
 renderOpponentSearchList();
 
@@ -1246,6 +1540,331 @@ function enterLoginOrLobbyAfterAd() {
 }
 
 initBannerAd(ui.googleAdContainer);
+
+// --- 실시간 온라인 방 대전 (/api/battle/*) 바인딩 & 재접속 ---
+let onlineMatchEntered = false;
+
+function handleOnlineRoomState(res) {
+  if (!res) return;
+  if (res.status === 'WAITING_GUEST') {
+    const joinedCount = res.players?.length || 1;
+    const maxP = res.maxPlayers || 2;
+    ui.onlineRoomStatusBox?.classList.remove('hidden');
+    ui.onlineRoomStatusText.textContent =
+      onlineClient.slot === 0
+        ? `방 코드 [${res.inviteCode}] — 참가자 입장 대기 중 (${joinedCount}/${maxP}명)...`
+        : `입장 완료! 다른 참가자 대기 중 (${joinedCount}/${maxP}명)...`;
+    ui.approveOnlineRoomBtn?.classList.add('hidden');
+    return;
+  }
+  if (res.status === 'WAITING_APPROVAL') {
+    ui.onlineRoomStatusBox?.classList.remove('hidden');
+    const joinedCount = res.players?.length || 2;
+    const maxP = res.maxPlayers || 2;
+    if (onlineClient.slot === 0) {
+      const names = (res.players || []).slice(1).map((p) => p.name).join(', ');
+      const needMore = joinedCount < maxP ? ` (코드 [${res.inviteCode}] · ${joinedCount}/${maxP}명)` : ` (${joinedCount}/${maxP}명 완료!)`;
+      ui.onlineRoomStatusText.textContent = `🔔 ${names} 입장!${needMore}`;
+      ui.approveOnlineRoomBtn?.classList.remove('hidden');
+    } else {
+      ui.onlineRoomStatusText.textContent = `방장 시작 승인 대기 중... (${joinedCount}/${maxP}명)`;
+      ui.approveOnlineRoomBtn?.classList.add('hidden');
+    }
+    return;
+  }
+  if (res.status === 'ACTIVE' && res.snapshot) {
+    engine.isRemoteMatch = true;
+    if (!onlineMatchEntered) {
+      onlineMatchEntered = true;
+      window.AndroidBridge?.setOrientation?.('landscape');
+      engine.audio.startBattleBgm(res.snapshot.mapKey);
+      ui.interstitialAdOverlay?.classList.add('hidden');
+      ui.profileModal?.classList.add('hidden');
+      ui.lobbyScreen.classList.add('hidden');
+      ui.gameScreen.classList.remove('hidden');
+    }
+    onlineClient.applySnapshotToEngine(engine, res.snapshot);
+  }
+}
+
+ui.cancelOnlineRoomBtn?.addEventListener('click', () => {
+  onlineMatchEntered = false;
+  onlineClient.clearSession();
+  engine.isRemoteMatch = false;
+  ui.onlineRoomStatusBox?.classList.add('hidden');
+  lastLanRoomsJson = '';
+  refreshLanOpenRooms();
+});
+
+ui.createOnlineRoomBtn?.addEventListener('click', async () => {
+  onlineMatchEntered = false;
+  const prof = getSafeProfile();
+  const roomTitle = (ui.onlineRoomTitleInput?.value || '').trim();
+  try {
+    const res = await onlineClient.createRoom({
+      mapPreset: ui.mapSelect.value,
+      charKey: ui.charSelect.value,
+      name: prof.nickname,
+      roomTitle,
+      maxPlayers: Number(ui.onlineMaxPlayers?.value || 2),
+      schoolName: prof.schoolName || '',
+      className: prof.className || '',
+      scope: 'all',
+    });
+    ui.onlineRoomStatusBox?.classList.remove('hidden');
+    ui.onlineRoomStatusText.textContent = `방 생성 완료! 초대 코드: ${res.inviteCode}`;
+    onlineClient.startPolling(handleOnlineRoomState, 65);
+  } catch (err) {
+    ui.onlineRoomStatusBox?.classList.remove('hidden');
+    ui.onlineRoomStatusText.textContent = `방 생성 오류: ${err.message}`;
+  }
+});
+
+ui.createClassOnlineRoomBtn?.addEventListener('click', async () => {
+  onlineMatchEntered = false;
+  const prof = getSafeProfile();
+  const roomTitle = (ui.schoolRoomTitleInput?.value || '').trim();
+  try {
+    const res = await onlineClient.createRoom({
+      mapPreset: ui.mapSelect.value,
+      charKey: ui.charSelect.value,
+      name: prof.nickname,
+      roomTitle,
+      maxPlayers: Number(ui.schoolOnlineMaxPlayers?.value || 2),
+      schoolName: prof.schoolName || '',
+      className: prof.className || '',
+      scope: 'class',
+    });
+    ui.onlineRoomStatusBox?.classList.remove('hidden');
+    ui.onlineRoomStatusText.textContent = `🎓 [${shortSchoolLabel(prof.schoolName)} ${prof.className}] 반 대전 방 생성! 코드: ${res.inviteCode}`;
+    onlineClient.startPolling(handleOnlineRoomState, 65);
+  } catch (err) {
+    ui.onlineRoomStatusBox?.classList.remove('hidden');
+    ui.onlineRoomStatusText.textContent = `방 생성 오류: ${err.message}`;
+  }
+});
+
+ui.joinOnlineRoomBtn?.addEventListener('click', async () => {
+  onlineMatchEntered = false;
+  const code = (ui.onlineInviteInput?.value || '').trim().toUpperCase();
+  if (!code) return;
+  const prof = getSafeProfile();
+  try {
+    const res = await onlineClient.joinRoom({
+      inviteCode: code,
+      charKey: ui.charSelect.value,
+      name: prof.nickname,
+    });
+    if (res?.status === 'ACTIVE' && res?.snapshot) {
+      onlineClient.startPolling(handleOnlineRoomState, 65);
+      handleOnlineRoomState(res);
+      return;
+    }
+    ui.onlineRoomStatusBox?.classList.remove('hidden');
+    ui.onlineRoomStatusText.textContent = '입장 완료! 다른 참가자/시작 대기 중...';
+    onlineClient.startPolling(handleOnlineRoomState, 65);
+  } catch (err) {
+    ui.onlineRoomStatusBox?.classList.remove('hidden');
+    ui.onlineRoomStatusText.textContent = `입장 실패: ${err.message}`;
+  }
+});
+
+ui.approveOnlineRoomBtn?.addEventListener('click', async () => {
+  try {
+    const res = await onlineClient.approveRoom();
+    if (res?.snapshot) {
+      handleOnlineRoomState({ status: 'ACTIVE', snapshot: res.snapshot });
+    }
+  } catch (err) {
+    ui.onlineRoomStatusText.textContent = `시작 실패: ${err.message}`;
+  }
+});
+
+// 같은 네트워크 열린 대기방 목록 자동 조회 & 1클릭 입장
+let lastLanRoomsJson = '';
+async function refreshLanOpenRooms() {
+  if (!ui.lanOpenRoomsList || ui.lobbyScreen?.classList.contains('hidden')) return;
+  try {
+    const res = await fetch('/api/battle/rooms/open', { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = await res.json();
+    const list = (data.rooms || []).filter((r) => r.roomId !== onlineClient.roomId);
+    const prof = loadUserProfile();
+    const mySchool = String(prof?.schoolName || '').trim();
+    const myClass = String(prof?.className || '').trim();
+    const sig = JSON.stringify({ list, mySchool, myClass });
+    if (sig === lastLanRoomsJson) return;
+    lastLanRoomsJson = sig;
+    const renderRoomRow = (r) => {
+      const classTag = r.schoolName && r.className ? ` · ${shortSchoolLabel(r.schoolName)} ${r.className}` : '';
+      const titleLabel = r.roomTitle || `${r.hostName}의 방`;
+      const icon = r.scope === 'class' ? '🎓' : '🏠';
+      return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;background:rgba(15,23,42,0.45);padding:6px 8px;border-radius:8px;">
+        <span style="font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${icon} <b>${titleLabel}</b> <span style="opacity:0.75;">(${r.hostName}${classTag} · ${r.playersCount}/${r.maxPlayers}명)</span></span>
+        <button type="button" class="social-mini-btn lan-join-btn" data-code="${r.inviteCode}" style="flex:0 0 auto;">입장</button>
+      </div>`;
+    };
+    const bindJoinBtns = (container) => {
+      container.querySelectorAll('.lan-join-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          if (ui.onlineInviteInput) ui.onlineInviteInput.value = btn.dataset.code || '';
+          ui.joinOnlineRoomBtn?.click();
+        });
+      });
+    };
+
+    if (!list.length) {
+      ui.lanOpenRoomsList.innerHTML = '<span style="font-size:11.5px; opacity:0.7;">열린 방이 없습니다. 방 만들기를 누르세요!</span>';
+    } else {
+      ui.lanOpenRoomsList.innerHTML = list.map(renderRoomRow).join('');
+      bindJoinBtns(ui.lanOpenRoomsList);
+    }
+
+    if (ui.schoolOpenRoomsList) {
+      const classRooms = list.filter((r) => {
+        if (!mySchool || !myClass) return r.scope === 'class';
+        return r.schoolName === mySchool && r.className === myClass;
+      });
+      if (!classRooms.length) {
+        ui.schoolOpenRoomsList.innerHTML = '<span style="font-size:11.5px; opacity:0.7;">현재 열린 우리 반 온라인 방이 없습니다.</span>';
+      } else {
+        ui.schoolOpenRoomsList.innerHTML = classRooms.map(renderRoomRow).join('');
+        bindJoinBtns(ui.schoolOpenRoomsList);
+      }
+    }
+  } catch {
+    // ignore transient poll error
+  }
+}
+refreshLanOpenRooms();
+setInterval(refreshLanOpenRooms, 2200);
+
+let currentLbScope = 'all';
+for (const btn of ui.lbScopeBtns || []) {
+  btn.addEventListener('click', () => {
+    currentLbScope = btn.dataset.lbScope || 'all';
+    for (const b of ui.lbScopeBtns) b.classList.toggle('active', b === btn);
+    refreshLeaderboard(true);
+  });
+}
+
+async function sendChallengeToPlayer(targetUserId, targetNickname) {
+  onlineMatchEntered = false;
+  const prof = getSafeProfile();
+  try {
+    const res = await onlineClient.createRoom({
+      mapPreset: ui.mapSelect.value,
+      charKey: ui.charSelect.value,
+      name: prof.nickname,
+      maxPlayers: 2,
+      schoolName: prof.schoolName || '',
+      className: prof.className || '',
+      scope: 'all',
+    });
+    await fetch('/api/battle/challenges', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        targetUserId,
+        inviteCode: res.inviteCode,
+        roomId: res.roomId,
+        fromUserId: prof.userId,
+        fromNickname: prof.nickname,
+        fromSchool: prof.schoolName,
+        fromClass: prof.className,
+      }),
+    });
+    ui.onlineRoomStatusBox?.classList.remove('hidden');
+    ui.onlineRoomStatusText.textContent = `⚔️ ${targetNickname}(@${targetUserId})님에게 대결 요청 전송 완료! 수락 대기 중... [${res.inviteCode}]`;
+    onlineClient.startPolling(handleOnlineRoomState, 65);
+  } catch (err) {
+    ui.onlineRoomStatusBox?.classList.remove('hidden');
+    ui.onlineRoomStatusText.textContent = `대결 요청 오류: ${err.message}`;
+  }
+}
+
+let lastLeaderboardJson = '';
+async function refreshLeaderboard(force = false) {
+  if (!ui.leaderboardList) return;
+  if (!force && ui.lobbyScreen?.classList.contains('hidden')) return;
+  try {
+    const prof = loadUserProfile();
+    const myId = prof?.userId || '';
+    const mySchool = prof?.schoolName || '';
+    const myClass = prof?.className || '';
+    const qs = new URLSearchParams({
+      scope: currentLbScope,
+      schoolName: mySchool,
+      className: myClass,
+    });
+    const res = await fetch(`/api/battle/leaderboard?${qs.toString()}`, { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = await res.json();
+    const list = data.leaderboard || [];
+    const schoolTop = data.schoolTop || null;
+    const sig = JSON.stringify({ list, schoolTop, myId, currentLbScope });
+    if (!force && sig === lastLeaderboardJson) return;
+    lastLeaderboardJson = sig;
+
+    if (ui.schoolTopBanner) {
+      if (schoolTop) {
+        ui.schoolTopBanner.textContent = `👑 ${shortSchoolLabel(mySchool)} 1등: ${schoolTop.nickname} (@${schoolTop.userId}) · ${schoolTop.score ?? 0}점 (${schoolTop.matches}전 ${schoolTop.wins}승 · ${schoolTop.winRate}%)`;
+      } else if (mySchool) {
+        ui.schoolTopBanner.textContent = `👑 ${shortSchoolLabel(mySchool)} 첫 1등에 도전해보세요!`;
+      } else {
+        ui.schoolTopBanner.textContent = '👑 학교 정보를 등록하면 우리 학교 1등을 볼 수 있어요!';
+      }
+    }
+
+    if (!list.length) {
+      ui.leaderboardList.innerHTML = '<span style="font-size:11.5px; opacity:0.7;">아직 기록된 전적이 없습니다. 첫 대전을 시작해보세요!</span>';
+      return;
+    }
+    ui.leaderboardList.innerHTML = list
+      .map((item) => {
+        const medal = item.rank === 1 ? '🥇' : item.rank === 2 ? '🥈' : item.rank === 3 ? '🥉' : `${item.rank}위`;
+        const isMe = myId && item.userId === myId;
+        const bg = isMe ? 'rgba(250,204,21,0.18); border:1px solid rgba(250,204,21,0.45);' : 'rgba(15,23,42,0.45);';
+        const challengeBtn = !isMe
+          ? `<button type="button" class="social-mini-btn lb-challenge-btn" data-uid="${item.userId}" data-nick="${item.nickname}" style="padding:3px 7px;font-size:11px;flex:0 0 auto;">⚔️ 대결</button>`
+          : '';
+        return `<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;background:${bg}padding:5px 8px;border-radius:8px;font-size:12px;">
+          <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${medal} <b>${item.nickname}</b> <span style="opacity:0.7;">@${item.userId}</span></span>
+          <div style="display:flex;align-items:center;gap:6px;flex:0 0 auto;">
+            <span style="white-space:nowrap;font-weight:700;color:#FDE047;">${item.score ?? 0}점 · ${item.matches}전 ${item.wins}승 (${item.winRate}%)</span>
+            ${challengeBtn}
+          </div>
+        </div>`;
+      })
+      .join('');
+    ui.leaderboardList.querySelectorAll('.lb-challenge-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        sendChallengeToPlayer(btn.dataset.uid, btn.dataset.nick || btn.dataset.uid);
+      });
+    });
+  } catch {
+    // ignore transient error
+  }
+}
+refreshLeaderboard(true);
+setInterval(() => refreshLeaderboard(false), 5000);
+
+// 새로고침 후 진행 중인 온라인 대전 세션이 있으면 자동 재접속
+(async () => {
+  const saved = onlineClient.loadSession();
+  if (!saved) return;
+  try {
+    const st = await onlineClient.fetchState();
+    if (st && (st.status === 'ACTIVE' || st.status === 'WAITING_GUEST' || st.status === 'WAITING_APPROVAL')) {
+      handleOnlineRoomState(st);
+      onlineClient.startPolling(handleOnlineRoomState, 65);
+    } else {
+      onlineClient.clearSession();
+    }
+  } catch {
+    onlineClient.clearSession();
+  }
+})();
 
 // 최초 구동 시 구글 전면 광고(3초 카운트다운) 시청 후 로그인/회원가입 화면으로 진입
 if (ui.interstitialAdOverlay && sessionStorage.getItem('puffpuff_intro_ad_shown') !== '1') {

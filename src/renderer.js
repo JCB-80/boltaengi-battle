@@ -121,6 +121,9 @@ export class GameRenderer {
     this.shakeMag = 0;
     this.flashAlpha = 0;
     this.flashColor = '#FEF08A';
+    this.camX = 0;
+    this.camY = 0;
+    this.camZoom = 1;
   }
 
   addShake(amount) {
@@ -144,6 +147,29 @@ export class GameRenderer {
     const scaleX = cw / WORLD.WIDTH;
     const scaleY = ch / WORLD.HEIGHT;
     ctx.scale(scaleX, scaleY);
+
+    // 발사체 비행 중 투사체를 따라 카메라 앵글 살짝 이동 + 미세 줌
+    const activeProj =
+      state.phase === 'FLIGHT' && Array.isArray(state.projectiles)
+        ? state.projectiles.find((p) => p.active !== false)
+        : null;
+    const targetZoom = activeProj ? 1.18 : 1.0;
+    const targetCamX = activeProj
+      ? Math.max(-110, Math.min(110, (WORLD.WIDTH * 0.5 - activeProj.x) * 0.24))
+      : 0;
+    const targetCamY = activeProj
+      ? Math.max(-60, Math.min(60, (WORLD.HEIGHT * 0.5 - activeProj.y) * 0.22))
+      : 0;
+    const camLerp = activeProj ? 0.18 : 0.1;
+    this.camZoom += (targetZoom - this.camZoom) * camLerp;
+    this.camX += (targetCamX - this.camX) * camLerp;
+    this.camY += (targetCamY - this.camY) * camLerp;
+
+    if (Math.abs(this.camZoom - 1) > 0.0005 || Math.abs(this.camX) > 0.05 || Math.abs(this.camY) > 0.05) {
+      ctx.translate(WORLD.WIDTH * 0.5 + this.camX, WORLD.HEIGHT * 0.5 + this.camY);
+      ctx.scale(this.camZoom, this.camZoom);
+      ctx.translate(-WORLD.WIDTH * 0.5, -WORLD.HEIGHT * 0.5);
+    }
 
     // 화면 흔들림(타격감 카메라 쉐이크)
     if (this.shakeMag > 0.2) {
@@ -700,9 +726,9 @@ export class GameRenderer {
       ctx.strokeStyle = '#78350F';
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.moveTo(0, -70 + bob);
-      ctx.lineTo(-8, -82 + bob);
-      ctx.lineTo(8, -82 + bob);
+      ctx.moveTo(0, -98 + bob);
+      ctx.lineTo(-9, -111 + bob);
+      ctx.lineTo(9, -111 + bob);
       ctx.closePath();
       ctx.fill();
       ctx.stroke();
@@ -711,9 +737,9 @@ export class GameRenderer {
     ctx.save();
     ctx.rotate(cart.tiltAngle);
 
-    // 좌/우 방향 반전 + 모바일/PC 모두 선명한 1.8등신 벨벳 말랑볼 요정단 스케일 (1.28x)
+    // 좌/우 방향 반전 + 모바일/PC 모두 또렷한 3D 벨벳 말랑볼 요정단 스케일 (1.74x)
     ctx.save();
-    ctx.scale(cart.facing * 1.28, 1.28);
+    ctx.scale(cart.facing * 1.74, 1.74);
 
     const idleBob = Math.sin(frameCount * 0.09 + cart.slotIndex * 1.7) * 1.2;
     const stepL = Math.max(0, Math.sin(cart.wheelSpin * 2.8)) * 4.5;
@@ -732,8 +758,12 @@ export class GameRenderer {
 
     const sprite3d = getCharSprite(cart.spec?.id || cart.charKey);
     if (sprite3d.loaded) {
-      // 실제 3D 벨벳·젤리볼 피규어 스프라이트 렌더링 (자기 볼살 2D 탄성 메쉬 워핑 + 발사 반동)
+      // 실제 3D 벨벳·젤리볼 피규어 스프라이트 렌더링 (배경 분리 드롭섀도우 + 볼살 2D 탄성 메쉬 워핑)
       ctx.save();
+      ctx.shadowColor = 'rgba(15, 23, 42, 0.58)';
+      ctx.shadowBlur = 9;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 3;
       const sx = 1 - pullNorm * 0.07 + cart.recoil * 0.14;
       const sy = 1 + pullNorm * 0.05 - cart.recoil * 0.12;
       ctx.scale(sx, sy);
@@ -741,11 +771,10 @@ export class GameRenderer {
       let inGameCheekDx = 0;
       let inGameCheekDy = 0;
       if (isCurrent && (phase === 'AIM' || cart.recoil > 0.02)) {
-        const rad = (cart.aimElevation * Math.PI) / 180;
-        const pullPx = (8 + (cart.aimPower / 100) * 24) * (1 - Math.min(1, cart.recoil * 1.15));
-        const snap = cart.recoil > 0 ? Math.sin(cart.recoil * Math.PI * 4) * 7 : 0;
-        inGameCheekDx = -Math.cos(rad * 0.65) * (pullPx - snap);
-        inGameCheekDy = Math.sin(rad * 0.65) * (pullPx - snap);
+        const pullPx = (6 + (cart.aimPower / 100) * 14) * (1 - Math.min(1, cart.recoil * 1.15));
+        const snap = cart.recoil > 0 ? Math.sin(cart.recoil * Math.PI * 4) * 5 : 0;
+        inGameCheekDx = -(pullPx - snap);
+        inGameCheekDy = 1.5 * (cart.aimPower / 100);
       }
 
       drawWarpedSprite3D(
@@ -754,12 +783,12 @@ export class GameRenderer {
         -29,
         -56 + idleBob * 0.5 - walkHop,
         58,
-        -8,
-        headY + 2,
+        -19,
+        headY + 4,
         inGameCheekDx,
         inGameCheekDy,
-        15,
-        10
+        9.5,
+        14
       );
       ctx.restore();
     } else {
@@ -931,14 +960,52 @@ export class GameRenderer {
       ctx.stroke();
     }
 
-    // 얼굴 본체 (1.8등신 큰 물방울 머리)
+    // 얼굴 본체 (애니메이션 셀 셰이딩 + 당길 때 볼살이 탱글하게 늘어나는 윤곽선!)
+    const isCheekActive = isCurrent && (phase === 'AIM' || cart.recoil > 0.02);
+    const activeStretch = isCheekActive ? Math.max(0.12, cart.aimPower / 100) : 0;
+    const strainPulse = isCheekActive && activeStretch > 0.6 ? Math.sin(frameCount * 0.35) * 1.1 : 0;
+    const activePullPx = isCheekActive
+      ? (4.5 + activeStretch * 9.5 + strainPulse) * (1 - Math.min(1, cart.recoil * 1.15)) -
+        (cart.recoil > 0 ? Math.sin(cart.recoil * Math.PI * 4) * 3.5 : 0)
+      : 0;
+    const seamlessCheekTipX = -15.5 - activePullPx;
+
     ctx.fillStyle = cart.spec.primaryColor;
     ctx.strokeStyle = cart.spec.secondaryColor;
-    ctx.lineWidth = 2.3;
+    ctx.lineWidth = 2.2;
     ctx.beginPath();
-    ctx.ellipse(0, headY, 15.5, 13.5, 0, 0, Math.PI * 2);
+    if (isCheekActive && activePullPx > 1.5) {
+      // 이마·귀·오른쪽 얼굴은 둥글게 고정하고, 왼쪽 볼만 탱글하고 둥글게 늘어남
+      ctx.moveTo(0, headY - 13.5);
+      ctx.bezierCurveTo(10, headY - 13.5, 16, headY - 7, 16, headY);
+      ctx.bezierCurveTo(16, headY + 8, 9, headY + 13.5, 0, headY + 13.5);
+      ctx.bezierCurveTo(-6, headY + 13.5, seamlessCheekTipX + 6, headY + 10.5, seamlessCheekTipX + 1, headY + 6.5);
+      ctx.arc(seamlessCheekTipX + 1.5, headY + 3.0, 3.6, Math.PI * 0.5, Math.PI * 1.5, false);
+      ctx.bezierCurveTo(seamlessCheekTipX + 5, headY - 1.2, -14.5, headY - 2.0, -14.5, headY - 4.5);
+      ctx.bezierCurveTo(-14.5, headY - 10, -8, headY - 13.5, 0, headY - 13.5);
+    } else {
+      ctx.ellipse(0, headY, 15.5, 13.5, 0, 0, Math.PI * 2);
+    }
     ctx.fill();
     ctx.stroke();
+
+    // 애니메이션 볼 홍조 + 볼 늘어남 주름선
+    ctx.fillStyle = 'rgba(251, 113, 133, 0.45)';
+    ctx.beginPath();
+    ctx.ellipse(10.5, headY + 3.5, 3.8, 2.3, 0, 0, Math.PI * 2);
+    ctx.ellipse(isCheekActive ? seamlessCheekTipX + 5.5 : -9.5, headY + 3.8, 3.8, 2.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (isCheekActive && activePullPx > 3) {
+      ctx.strokeStyle = 'rgba(244, 63, 94, 0.55)';
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      ctx.moveTo(seamlessCheekTipX + 7.5, headY + 1.2);
+      ctx.lineTo(seamlessCheekTipX + 3.0, headY + 2.2);
+      ctx.moveTo(seamlessCheekTipX + 7.5, headY + 5.4);
+      ctx.lineTo(seamlessCheekTipX + 3.0, headY + 4.3);
+      ctx.stroke();
+    }
 
     // 머리 위 포인트 아이템 (푸딩 베레모, 딸기 베레모, 밀짚모자, 토성 머리띠, 화관, 체리핀)
     if (outfit === 'beret') {
@@ -980,95 +1047,164 @@ export class GameRenderer {
       ctx.stroke();
     }
 
-    // 코 & 눈
+    // 코 & 입 (서로 마주보는 3/4 측면 프로필)
     ctx.fillStyle = '#4A2C2A';
     ctx.beginPath();
-    ctx.ellipse(5.5, headY + 0.5, 2.0, 1.4, 0, 0, Math.PI * 2);
+    ctx.ellipse(10.5, headY + 0.5, 2.1, 1.5, 0, 0, Math.PI * 2);
     ctx.fill();
-    this.drawAnimalFace(ctx, cart.mood, headY, frameCount + cart.slotIndex * 31);
+    ctx.strokeStyle = '#5C3A21';
+    ctx.lineWidth = 1.4;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.arc(8.5, headY + 3.2, 2.0, 0, Math.PI);
+    ctx.arc(12.2, headY + 3.2, 2.0, 0, Math.PI);
+    ctx.stroke();
+    this.drawAnimalFace(
+      ctx,
+      isCheekActive && activeStretch > 0.25 ? 'pull_wink' : cart.mood,
+      headY,
+      frameCount + cart.slotIndex * 31
+    );
     }
 
-    // 5) 투명 젤리 코어(Jelly-Core) 볼살에 탄환 넣고 쭈욱 잡아당겨 쏘기!
+    // 5) 탱글한 볼 당기기 + 고리(O) + 탄성 새총 줄 + 무지개 탄두 모션
     const showActiveCheek = isCurrent && (phase === 'AIM' || cart.recoil > 0.02);
     if (showActiveCheek) {
       const rad = (cart.aimElevation * Math.PI) / 180;
-      const stretchRatio = Math.max(0.15, cart.aimPower / 100);
-      const isPulling = phase === 'AIM' && stretchRatio > 0.22;
-      const pinchOut = (11 + stretchRatio * 34) * (1 - Math.min(1, cart.recoil * 1.15));
-      const cheekSnap = cart.recoil > 0 ? Math.sin(cart.recoil * Math.PI * 4) * 9 : 0;
-      const tipX = -pinchOut - 5 + cheekSnap;
+      const stretchRatio = Math.max(0.12, cart.aimPower / 100);
+      const isPulling = phase === 'AIM' && stretchRatio > 0.18;
+      const strainPulse = stretchRatio > 0.6 ? Math.sin(frameCount * 0.35) * 1.1 : 0;
+      const pullPx =
+        (4.5 + stretchRatio * 9.5 + strainPulse) * (1 - Math.min(1, cart.recoil * 1.15)) -
+        (cart.recoil > 0 ? Math.sin(cart.recoil * Math.PI * 4) * 3.5 : 0);
+
+      // 탱글하게 늘어난 볼 끝 좌표
+      const cheekTipX = -15.5 - pullPx;
+      const cheekTipY = headY + 3.0;
+
+      // 앞쪽 조준 손 + 무지개 탄두 좌표 (몸에 가까운 자연스러운 팔 길이)
+      const aimAngle = -rad * 0.65;
+      const frontDist = 14 + stretchRatio * 4.5;
+      const frontX = 7 + Math.cos(aimAngle) * frontDist;
+      const frontY = headY + 8.5 + Math.sin(aimAngle) * frontDist;
 
       ctx.save();
-      ctx.translate(4, headY + 3);
-      ctx.rotate(-rad * 0.65);
 
-      // 5-1) 볼 안에 쏙 들어간 탄환 구슬 (반투명 젤리 외피보다 먼저 그려서 볼 속에 들어간 입체감!)
-      const activeShell = SHELLS[cart.selectedShell] || SHELLS.ACORN_SPLIT;
-      const bulletColor = cart.useUltimate ? '#F97316' : activeShell.color || '#FACC15';
-      if (cart.recoil < 0.15) {
-        const bGrad = ctx.createRadialGradient(tipX - 2, -2, 1, tipX, 0, 6.2);
-        bGrad.addColorStop(0, '#FFFFFF');
-        bGrad.addColorStop(0.4, bulletColor);
-        bGrad.addColorStop(1, '#1E293B');
-        ctx.fillStyle = bGrad;
+      // 5-1) 볼 바깥쪽 모션 커브선
+      if (isPulling) {
+        ctx.strokeStyle = 'rgba(51, 65, 85, 0.48)';
+        ctx.lineWidth = 1.2;
+        ctx.lineCap = 'round';
         ctx.beginPath();
-        ctx.arc(tipX, 0, 5.8, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.arc(cheekTipX - 3.5, cheekTipY, 5.2, Math.PI * 0.72, Math.PI * 1.28);
+        ctx.stroke();
       }
 
-      // 5-2) 반투명 3D 젤리 볼살 주머니 (탄환을 감싸고 뒤로 쭈욱 늘어나는 탄성 젤리!)
-      const jGrad = ctx.createLinearGradient(6, -8, tipX - 8, 8);
-      jGrad.addColorStop(0, 'rgba(255, 209, 226, 0.55)');
-      jGrad.addColorStop(0.55, 'rgba(255, 228, 240, 0.68)');
-      jGrad.addColorStop(1, 'rgba(251, 113, 133, 0.58)');
-      ctx.fillStyle = jGrad;
-      ctx.strokeStyle = 'rgba(244, 63, 94, 0.85)';
-      ctx.lineWidth = 2.0;
+      // 5-2) 몸통에서 뻗어나와 볼을 꼬집는 애니 팔+손
+      ctx.strokeStyle = cart.spec.secondaryColor || '#5C3A21';
+      ctx.lineWidth = 4.4;
+      ctx.lineCap = 'round';
       ctx.beginPath();
-      ctx.moveTo(5, -6.5);
-      ctx.quadraticCurveTo(tipX * 0.45, -2.8, tipX, -7.8);
-      ctx.arc(tipX, 0, 8.2, -Math.PI * 0.5, Math.PI * 0.5, true);
-      ctx.quadraticCurveTo(tipX * 0.45, 3.2, 5, 8.5);
-      ctx.closePath();
-      ctx.fill();
+      ctx.moveTo(-9, headY + 14);
+      ctx.quadraticCurveTo((cheekTipX - 9) * 0.5, cheekTipY + 8, cheekTipX - 1.5, cheekTipY + 1);
+      ctx.stroke();
+      ctx.strokeStyle = cart.spec.primaryColor || '#FEF3C7';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(-9, headY + 14);
+      ctx.quadraticCurveTo((cheekTipX - 9) * 0.5, cheekTipY + 8, cheekTipX - 1.5, cheekTipY + 1);
       ctx.stroke();
 
-      // 5-3) 젤리 볼살 고광택 유리 하이라이트 (볼 속에 탄환이 비쳐 보이는 느낌!)
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.88)';
+      ctx.strokeStyle = '#92400E';
+      ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.ellipse(tipX * 0.52, -2.8, 5 + stretchRatio * 5, 1.6, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(tipX - 2.5, -3.5, 2.2, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.arc(cheekTipX - 0.5, cheekTipY, 2.1, 0, Math.PI * 2);
+      ctx.stroke();
 
-      // 5-4) 당기는 탄성 장력선
-      if (isPulling) {
-        ctx.strokeStyle = 'rgba(253, 224, 71, 0.85)';
-        ctx.lineWidth = 1.6;
-        ctx.setLineDash([3, 3]);
-        ctx.beginPath();
-        ctx.moveTo(2, 0);
-        ctx.lineTo(tipX + 6, 0);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
-
-      // 5-5) 볼살 끝을 꼬집어 당기는 손(앞발)
       ctx.fillStyle = cart.spec.primaryColor;
       ctx.strokeStyle = cart.spec.secondaryColor;
-      ctx.lineWidth = 1.8;
+      ctx.lineWidth = 1.6;
       ctx.beginPath();
-      ctx.arc(tipX - 6, isPulling ? 4.5 : 3.5, 4.6, 0, Math.PI * 2);
+      ctx.arc(cheekTipX - 2.8, cheekTipY + 1.2, 3.5, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
 
-      // 5-6) 발사 순간 '탱!' 반동 젤리 팝 링
-      if (cart.recoil > 0.35) {
-        ctx.strokeStyle = `rgba(251, 113, 133, ${cart.recoil})`;
-        ctx.lineWidth = 2.4;
+      // 5-3) 볼 끝 고리에서 입 아래를 지나 앞쪽 무지개 탄두로 이어지는 탱글한 파스텔 탄성 줄
+      if (cart.recoil < 0.25) {
+        const tailX = frontX - Math.cos(aimAngle) * 3.5;
+        const tailY = frontY - Math.sin(aimAngle) * 3.5;
+        ctx.strokeStyle = 'rgba(244, 114, 182, 0.85)';
+        ctx.lineWidth = 1.8;
         ctx.beginPath();
-        ctx.arc(4, 0, (1 - cart.recoil) * 26 + 6, 0, Math.PI * 2);
+        ctx.moveTo(cheekTipX + 1.5, cheekTipY);
+        ctx.quadraticCurveTo((cheekTipX + tailX) * 0.5, headY + 9.5, tailX, tailY);
+        ctx.stroke();
+
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.65)';
+        ctx.lineWidth = 0.8;
+        ctx.beginPath();
+        ctx.moveTo(cheekTipX + 1.5, cheekTipY - 0.5);
+        ctx.quadraticCurveTo((cheekTipX + tailX) * 0.5, headY + 9.0, tailX, tailY - 0.5);
+        ctx.stroke();
+
+        // 5-4) 앞쪽으로 뻗은 애니 팔 + 손
+        const handX = frontX - Math.cos(aimAngle) * 5.5;
+        const handY = frontY - Math.sin(aimAngle) * 5.5 + 2.5;
+        ctx.strokeStyle = cart.spec.secondaryColor || '#5C3A21';
+        ctx.lineWidth = 4.4;
+        ctx.beginPath();
+        ctx.moveTo(8, headY + 14);
+        ctx.lineTo(handX, handY);
+        ctx.stroke();
+        ctx.strokeStyle = cart.spec.primaryColor || '#FEF3C7';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(8, headY + 14);
+        ctx.lineTo(handX, handY);
+        ctx.stroke();
+
+        ctx.fillStyle = cart.spec.primaryColor;
+        ctx.strokeStyle = cart.spec.secondaryColor;
+        ctx.lineWidth = 1.7;
+        ctx.beginPath();
+        ctx.arc(handX, handY, 3.6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        // 5-5) 무지개빛 뾰족 탄두
+        ctx.save();
+        ctx.translate(frontX, frontY);
+        ctx.rotate(aimAngle);
+        const rGrad = ctx.createLinearGradient(-4, -4.5, 8, 4.5);
+        rGrad.addColorStop(0.0, '#FB7185');
+        rGrad.addColorStop(0.28, '#FACC15');
+        rGrad.addColorStop(0.55, '#4ADE80');
+        rGrad.addColorStop(0.8, '#38BDF8');
+        rGrad.addColorStop(1.0, '#A855F7');
+        ctx.fillStyle = rGrad;
+        ctx.strokeStyle = '#334155';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(-4.5, -4.5);
+        ctx.lineTo(8.5, 0);
+        ctx.lineTo(-4.5, 4.5);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+        ctx.beginPath();
+        ctx.arc(10, -3.2, 1.3 + Math.sin(frameCount * 0.3) * 0.35, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // 5-6) 발사 순간 '탱!' 반동 팝 링
+      if (cart.recoil > 0.35) {
+        ctx.strokeStyle = `rgba(251, 113, 133, ${cart.recoil * 0.85})`;
+        ctx.lineWidth = 2.2;
+        ctx.beginPath();
+        ctx.arc(-6, headY + 3, (1 - cart.recoil) * 20 + 4, 0, Math.PI * 2);
         ctx.stroke();
       }
       ctx.restore();
@@ -1126,32 +1262,66 @@ export class GameRenderer {
     ctx.restore(); // scale 복구
     ctx.restore(); // tilt 복구
 
-    // 5) 캐릭터 하단 체력바 · 궁극기 게이지 · 이름표
-    // 5) 캐릭터 하단 간략 체력바 (상단·하단 메뉴에 상세 정보가 있으므로 전장은 깔끔하고 컴팩트하게!)
-    const barW = 40;
-    const barH = 5;
+    // 5) 캐릭터 하단 세련된 입체 광택 체력바 & 이름표
+    const barW = 48;
+    const barH = 7;
     const barY = 9;
-    const hpRatio = Math.max(0, cart.hp / cart.maxHp);
+    const hpRatio = Math.max(0, Math.min(1, cart.hp / cart.maxHp));
 
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.72)';
-    this.roundRect(ctx, -barW / 2 - 1, barY - 1, barW + 2, barH + 2, 3);
+    // 어두운 글래스 캡슐 트랙 + 얇은 흰색 외곽선
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.82)';
+    this.roundRect(ctx, -barW / 2 - 1.5, barY - 1.5, barW + 3, barH + 3, 4.5);
     ctx.fill();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.65)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
 
-    ctx.fillStyle = hpRatio > 0.5 ? '#22C55E' : hpRatio > 0.25 ? '#F59E0B' : '#EF4444';
     if (hpRatio > 0) {
-      this.roundRect(ctx, -barW / 2, barY, barW * hpRatio, barH, 2.5);
+      const fillW = Math.max(4, barW * hpRatio);
+      const hpGrad = ctx.createLinearGradient(0, barY, 0, barY + barH);
+      if (hpRatio > 0.5) {
+        hpGrad.addColorStop(0, '#86EFAC');
+        hpGrad.addColorStop(0.45, '#22C55E');
+        hpGrad.addColorStop(1, '#15803D');
+      } else if (hpRatio > 0.25) {
+        hpGrad.addColorStop(0, '#FDE047');
+        hpGrad.addColorStop(0.45, '#F59E0B');
+        hpGrad.addColorStop(1, '#B45309');
+      } else {
+        hpGrad.addColorStop(0, '#FDA4AF');
+        hpGrad.addColorStop(0.45, '#F43F5E');
+        hpGrad.addColorStop(1, '#BE123C');
+      }
+      ctx.fillStyle = hpGrad;
+      this.roundRect(ctx, -barW / 2, barY, fillW, barH, 3.5);
       ctx.fill();
+
+      // 상단 유리 하이라이트
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.38)';
+      this.roundRect(ctx, -barW / 2 + 1, barY + 0.8, Math.max(2, fillW - 2), barH * 0.4, 2);
+      ctx.fill();
+    }
+
+    // 4등분 눈금 라인
+    ctx.strokeStyle = 'rgba(15, 23, 42, 0.35)';
+    ctx.lineWidth = 1;
+    for (let q = 1; q <= 3; q++) {
+      const tx = -barW / 2 + (barW * q) / 4;
+      ctx.beginPath();
+      ctx.moveTo(tx, barY + 1);
+      ctx.lineTo(tx, barY + barH - 1);
+      ctx.stroke();
     }
 
     ctx.font = 'bold 10.5px "Pretendard", "Malgun Gothic", sans-serif';
     ctx.textAlign = 'center';
     ctx.fillStyle = '#FFFFFF';
-    ctx.strokeStyle = 'rgba(15, 23, 42, 0.85)';
-    ctx.lineWidth = 2.6;
+    ctx.strokeStyle = 'rgba(15, 23, 42, 0.88)';
+    ctx.lineWidth = 2.8;
     const shortName = cart.spec?.name || cart.displayName;
     const tag = `${shortName} ${cart.hp}`;
-    ctx.strokeText(tag, 0, barY + 17);
-    ctx.fillText(tag, 0, barY + 17);
+    ctx.strokeText(tag, 0, barY + 19);
+    ctx.fillText(tag, 0, barY + 19);
 
     ctx.restore();
   }
@@ -1184,19 +1354,40 @@ export class GameRenderer {
       ctx.beginPath();
       ctx.ellipse(-9, headY - 4, 2.5, 4.5, 0.2, 0, Math.PI * 2);
       ctx.fill();
-    } else if (mood === 'happy' || blinkTick % 190 > 183) {
-      // ^ ^ 웃는 눈 또는 자연스러운 눈 깜빡임
+    } else if (mood === 'pull_wink') {
+      // 볼 당길 때 한쪽 눈 윙크(>) + 반대쪽 초롱초롱 눈!
+      ctx.lineCap = 'round';
       ctx.beginPath();
-      ctx.arc(3.5, headY - 1, 3.6, Math.PI, 0);
+      ctx.moveTo(2.5, headY - 4.2);
+      ctx.lineTo(6.5, headY - 2.0);
+      ctx.lineTo(2.5, headY + 0.2);
       ctx.stroke();
-    } else {
-      // 초롱초롱 큰 눈 + 반짝이는 하이라이트
+
       ctx.beginPath();
-      ctx.arc(3.8, headY - 2, 3.1, 0, Math.PI * 2);
+      ctx.arc(13.0, headY - 2.4, 2.5, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = '#FFFFFF';
       ctx.beginPath();
-      ctx.arc(4.8, headY - 3.2, 1.25, 0, Math.PI * 2);
+      ctx.arc(13.8, headY - 3.3, 0.95, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (mood === 'happy' || blinkTick % 190 > 183) {
+      // ^ ^ 웃는 눈 또는 자연스러운 눈 깜빡임 (3/4 측면 양눈)
+      ctx.beginPath();
+      ctx.arc(5.5, headY - 1.5, 3.2, Math.PI, 0);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(13.0, headY - 1.5, 2.4, Math.PI, 0);
+      ctx.stroke();
+    } else {
+      // 초롱초롱 큰 눈 + 먼 쪽 작은 눈 (서로 마주보는 3/4 측면)
+      ctx.beginPath();
+      ctx.arc(5.5, headY - 2.2, 3.0, 0, Math.PI * 2);
+      ctx.arc(13.2, headY - 2.4, 2.3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.beginPath();
+      ctx.arc(6.5, headY - 3.3, 1.15, 0, Math.PI * 2);
+      ctx.arc(13.9, headY - 3.3, 0.9, 0, Math.PI * 2);
       ctx.fill();
     }
   }
@@ -1317,7 +1508,13 @@ export class GameRenderer {
 
     // 미사일 추진 불꽃 / 젤리 꼬리
     const flameLen = 11 + Math.sin(frameCount * 0.8) * 3.5;
-    ctx.fillStyle = proj.isUltimate ? '#F97316' : '#FEF08A';
+    ctx.fillStyle = proj.isUltimate
+      ? '#F97316'
+      : proj.shellKey === 'AQUA_DRILL'
+        ? '#38BDF8'
+        : proj.shellKey === 'CHEESE_BOUNCE'
+          ? '#FDE047'
+          : '#FDBA74';
     ctx.beginPath();
     ctx.moveTo(-6, -5);
     ctx.lineTo(-6 - flameLen, 0);
@@ -1325,20 +1522,103 @@ export class GameRenderer {
     ctx.closePath();
     ctx.fill();
 
-    // 유선형 젤리 미사일 탄두
-    ctx.fillStyle = proj.isUltimate ? '#F97316' : proj.spec.color;
-    ctx.strokeStyle = proj.isUltimate ? '#FEF08A' : '#1E293B';
-    ctx.lineWidth = 2.2;
-    ctx.beginPath();
-    ctx.ellipse(2, 0, 12, 8.5, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
+    // 구슬 종류별 개성 있는 비행 탄두 디자인!
+    if (proj.isUltimate) {
+      // 🔥 궁극기 메가 혜성
+      ctx.fillStyle = '#F97316';
+      ctx.strokeStyle = '#FEF08A';
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      ctx.ellipse(2, 0, 13, 9.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#FEF08A';
+      ctx.beginPath();
+      ctx.arc(4, -2.5, 4.0, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (proj.shellKey === 'CHEESE_BOUNCE') {
+      // 🧀 탱탱 치즈볼: 회전하는 에멘탈 치즈 구멍 + 탱글한 광택!
+      ctx.save();
+      ctx.rotate(frameCount * 0.28);
+      ctx.fillStyle = '#FACC15';
+      ctx.strokeStyle = '#92400E';
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.arc(0, 0, 10.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // 치즈 구멍 3개
+      ctx.fillStyle = '#D97706';
+      ctx.beginPath();
+      ctx.arc(-3.5, -2.5, 2.3, 0, Math.PI * 2);
+      ctx.arc(4.0, 2.0, 2.7, 0, Math.PI * 2);
+      ctx.arc(-1.5, 4.5, 1.7, 0, Math.PI * 2);
+      ctx.fill();
+      // 광택
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+      ctx.beginPath();
+      ctx.ellipse(-3, -5, 3.2, 1.4, -0.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    } else if (proj.shellKey === 'AQUA_DRILL') {
+      // 💧 물방울 시추볼: 뾰족한 드릴형 물방울 + 회전 나선 링!
+      ctx.fillStyle = '#0EA5E9';
+      ctx.strokeStyle = '#0369A1';
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.moveTo(14, 0);
+      ctx.quadraticCurveTo(3, -10, -8, -7);
+      ctx.arc(-8, 0, 7, -Math.PI * 0.5, Math.PI * 0.5, true);
+      ctx.quadraticCurveTo(3, 10, 14, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
 
-    // 말랑 젤리 광택 하이라이트
-    ctx.fillStyle = proj.spec.coreColor;
-    ctx.beginPath();
-    ctx.ellipse(3, -3, 5.5, 2.4, 0, 0, Math.PI * 2);
-    ctx.fill();
+      // 드릴 나선 줄무늬
+      ctx.strokeStyle = '#E0F2FE';
+      ctx.lineWidth = 2.0;
+      const drillShift = (frameCount * 0.8) % 6;
+      ctx.beginPath();
+      ctx.moveTo(-4 + drillShift, -5.5);
+      ctx.lineTo(-1 + drillShift, 5.5);
+      ctx.moveTo(2 + drillShift * 0.6, -4.0);
+      ctx.lineTo(4.5 + drillShift * 0.6, 4.0);
+      ctx.stroke();
+
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+      ctx.beginPath();
+      ctx.ellipse(2, -3.5, 4.2, 1.6, -0.2, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      // 🌰 도토리 팝볼: 귀여운 도토리 모자 + 황금 갈색 몸통!
+      ctx.fillStyle = '#D97706';
+      ctx.strokeStyle = '#451A03';
+      ctx.lineWidth = 2.1;
+      ctx.beginPath();
+      ctx.ellipse(3, 0, 10, 8, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      // 도토리 갓(모자) + 꼭지
+      ctx.fillStyle = '#78350F';
+      ctx.beginPath();
+      ctx.ellipse(-4, 0, 5.5, 9.2, 0, Math.PI * 0.5, Math.PI * 1.5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.strokeStyle = '#451A03';
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      ctx.moveTo(-9, 0);
+      ctx.lineTo(-12.5, 0);
+      ctx.stroke();
+
+      ctx.fillStyle = '#FEF3C7';
+      ctx.beginPath();
+      ctx.ellipse(5, -3, 3.8, 1.8, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
     // 에어 트리거 가능 상태일 때 반짝이는 링 표시
     if (proj.canAirTrigger()) {
