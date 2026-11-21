@@ -1564,12 +1564,8 @@ renderFriendChips();
 renderOpponentSearchList();
 
 function enterLoginOrLobbyAfterAd() {
-  if (!loadUserProfile()) {
-    ui.lobbyScreen.classList.add('hidden');
-    openProfileModal(null, true);
-  } else {
-    ui.lobbyScreen.classList.remove('hidden');
-  }
+  ui.profileModal?.classList.add('hidden');
+  ui.lobbyScreen.classList.remove('hidden');
 }
 
 initBannerAd(ui.googleAdContainer);
