@@ -560,6 +560,24 @@ export class OnlineSimulation {
     }
   }
 
+  // Process disconnects as one batch so simultaneous timeouts cannot award an
+  // arbitrary winner. A forfeited current player's pending shot is cancelled.
+  forfeitSlots(slots) {
+    if (this.phase === 'GAME_OVER') return;
+    const forfeited = new Set(slots);
+    for (const slot of forfeited) {
+      const cart = this.carts[slot];
+      if (cart) {
+        cart.hp = 0;
+        cart.alive = false;
+      }
+    }
+    if (this.carts.filter((cart) => cart.alive).length <= 1 || forfeited.has(this.activeSlot)) {
+      this.projectiles = [];
+      this._advanceTurn();
+    }
+  }
+
   _advanceTurn() {
     const alive = this.carts.filter((c) => c.alive);
     if (alive.length <= 1) {

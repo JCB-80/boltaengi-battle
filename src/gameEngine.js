@@ -383,8 +383,13 @@ export class GameEngine {
           this.setWeather(nextWeather);
         }
       }
-      // 28% 확률로 랜덤 회오리 발생 -> 캐릭터 위치 강제 이동 & 기존 조준 무효화
-      if (Math.random() < 0.28) {
+      // 초반 1~3턴 제외, 최소 5턴 쿨타임 후 12% 확률로만 드물게 회오리 발생
+      if (
+        this.turnNumber >= 4 &&
+        this.turnNumber - (this.lastTornadoTurn || 0) >= 5 &&
+        Math.random() < 0.12
+      ) {
+        this.lastTornadoTurn = this.turnNumber;
         this.spawnTornado(this.activeActor);
       }
 
@@ -1051,11 +1056,13 @@ export class GameEngine {
     }
 
     // 4) 페이즈별 진행 로직
+    let handledHumanMove = false;
     if (this.phase === 'AIM' && this.activeActor) {
       if (!this.activeActor.alive) {
         this.enterSettlePhase();
       } else if (this.activeActor.controller === 'human') {
         this.handleHumanContinuousInput(heldKeys);
+        handledHumanMove = true;
         if (this.turnTimerFrames > 0) {
           this.turnTimerFrames--;
           const sec = Math.max(0, Math.ceil(this.turnTimerFrames / 60));
@@ -1085,6 +1092,25 @@ export class GameEngine {
       this.stepProjectiles();
     } else if (this.phase === 'SETTLE') {
       this.stepSettlePhase();
+    }
+
+    // 4.5) 회오리가 다가올 때는 내 턴이 아니어도(AI 턴·비행·판정 중) 언제든 좌우 대피 이동 허용!
+    if (this.tornado.active && !handledHumanMove && this.phase !== 'GAME_OVER') {
+      const humanCart = this.carts.find((c) => c.controller === 'human' && c.alive);
+      if (humanCart) {
+        const prevFuel = humanCart.fuel;
+        if (humanCart.fuel < 2) humanCart.fuel = 2;
+        let moved = false;
+        if (heldKeys.has('ArrowLeft') || heldKeys.has('KeyA') || heldKeys.has('UI_LEFT')) {
+          if (humanCart.drive(-1, this.terrain)) moved = true;
+          else humanCart.facing = -1;
+        } else if (heldKeys.has('ArrowRight') || heldKeys.has('KeyD') || heldKeys.has('UI_RIGHT')) {
+          if (humanCart.drive(1, this.terrain)) moved = true;
+          else humanCart.facing = 1;
+        }
+        humanCart.fuel = prevFuel;
+        if (moved) this.notifyHud();
+      }
     }
 
     // 5) 이펙트 파티클 및 플로팅 텍스트 감쇠

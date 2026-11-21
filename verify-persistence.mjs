@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { startBattleServer } from './server.mjs';
+import { BattlePersistentStore } from './battle-store.mjs';
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'battle-persist-'));
 const storeFile = path.join(tempDir, 'battle-store.json');
@@ -22,7 +23,8 @@ async function api(baseUrl, pathname, { method = 'GET', token = null, body = nul
 
 try {
   // 1) 서버 1차 기동 & 가상 테스트 계정 2개 생성
-  let srv = await startBattleServer(0, '127.0.0.1', { dataDir: tempDir });
+  const store = new BattlePersistentStore({ dataDir: tempDir });
+  let srv = await startBattleServer(0, '127.0.0.1', { store });
   let baseUrl = `http://127.0.0.1:${srv.address().port}`;
 
   const regA = await api(baseUrl, '/api/battle/accounts', {
@@ -52,45 +54,25 @@ try {
   assert.equal(noAuth.status, 401);
 
   // 3) 멱등성 보상 + 중복 지급 방지 + 낙관적 버전 충돌 검증
-  const reward1 = await api(baseUrl, '/api/battle/accounts/reward', {
-    method: 'POST',
-    token: tokenA,
-    body: { idempotencyKey: 'match-001', deltaXp: 120, win: true, expectedVersion: 1 },
-  });
-  assert.equal(reward1.status, 200);
-  assert.equal(reward1.json.deduplicated, false);
-  assert.equal(reward1.json.account.xp, 120);
-  assert.equal(reward1.json.account.wins, 1);
-  assert.equal(reward1.json.account.version, 2);
+  // Reward processing is now server-only; exercise the real store seam directly.
+  const reward1 = store.applyReward({ accountToken: tokenA, idempotencyKey: 'match-001', deltaXp: 120, win: true, expectedVersion: 1 });
+  assert.equal(reward1.deduplicated, false);
+  assert.equal(reward1.account.xp, 120);
+  assert.equal(reward1.account.wins, 1);
+  assert.equal(reward1.account.version, 2);
 
   // 같은 idempotencyKey 재요청 -> 중복 지급 없이 deduplicated: true
-  const rewardDup = await api(baseUrl, '/api/battle/accounts/reward', {
-    method: 'POST',
-    token: tokenA,
-    body: { idempotencyKey: 'match-001', deltaXp: 120, win: true, expectedVersion: 1 },
-  });
-  assert.equal(rewardDup.status, 200);
-  assert.equal(rewardDup.json.deduplicated, true);
-  assert.equal(rewardDup.json.account.xp, 120);
+  const rewardDup = store.applyReward({ accountToken: tokenA, idempotencyKey: 'match-001', deltaXp: 120, win: true, expectedVersion: 1 });
+  assert.equal(rewardDup.deduplicated, true);
+  assert.equal(rewardDup.account.xp, 120);
 
   // 오래된 expectedVersion으로 다른 키 전송 -> 409 SAVE_CONFLICT
-  const conflict = await api(baseUrl, '/api/battle/accounts/reward', {
-    method: 'POST',
-    token: tokenA,
-    body: { idempotencyKey: 'match-002', deltaXp: 50, win: false, expectedVersion: 1 },
-  });
-  assert.equal(conflict.status, 409);
-  assert.equal(conflict.json.error, 'SAVE_CONFLICT');
+  assert.throws(() => store.applyReward({ accountToken: tokenA, idempotencyKey: 'match-002', deltaXp: 50, win: false, expectedVersion: 1 }), { code: 'SAVE_CONFLICT' });
 
-  // localStorage 이관 멱등 테스트 (B 계정)
-  const mig1 = await api(baseUrl, '/api/battle/accounts/migrate-local', {
-    method: 'POST',
-    token: tokenB,
-    body: { idempotencyKey: 'mig-b-1', localXp: 350, localWins: 3, localMatches: 5, expectedVersion: 1 },
-  });
-  assert.equal(mig1.status, 200);
-  assert.equal(mig1.json.account.xp, 350);
-  assert.equal(mig1.json.account.wins, 3);
+  // Seed B via the server-side settlement seam; local migration is disabled.
+  const rewardB = store.applyReward({ accountToken: tokenB, idempotencyKey: 'match-b', deltaXp: 350, win: true, expectedVersion: 1 });
+  assert.equal(rewardB.account.xp, 350);
+  assert.equal(rewardB.account.wins, 1);
 
   // 비영속 임시 방 생성 (재시작 시 만료 확인용)
   const roomRes = await api(baseUrl, '/api/battle/rooms', {

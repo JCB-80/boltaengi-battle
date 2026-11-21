@@ -1351,6 +1351,7 @@ select,
   }
 }
 
+
 @keyframes puffSpin {
   0%, 100% { transform: scale(1) rotate(0deg); }
   50% { transform: scale(1.16) rotate(18deg); }
@@ -3026,6 +3027,40 @@ select,
   box-shadow: 0 2px 0 #7C2D12 !important;
 }
 
+/* 매치 종료 모달(#gameOverModal) 전 해상도 가로 잘림/스크롤바 원천 차단 */
+#gameOverModal .modal-card {
+  width: min(460px, 92vw) !important;
+  max-width: min(460px, 92vw) !important;
+  box-sizing: border-box !important;
+  overflow-x: hidden !important;
+  padding: 22px 20px !important;
+}
+
+#gameOverModal .modal-title {
+  font-size: clamp(19px, 3vw, 24px) !important;
+  line-height: 1.35 !important;
+  word-break: keep-all !important;
+  overflow-wrap: anywhere !important;
+}
+
+#gameOverModal .modal-actions {
+  display: flex !important;
+  flex-wrap: nowrap !important;
+  justify-content: center !important;
+  align-items: center !important;
+  gap: 10px !important;
+  width: 100% !important;
+}
+
+#gameOverModal .modal-actions button {
+  width: auto !important;
+  flex: 1 1 0 !important;
+  min-width: 0 !important;
+  padding: 11px 14px !important;
+  font-size: 14px !important;
+  white-space: nowrap !important;
+}
+
 /* 모바일 가로모드 최우선 적용 (S22/S25 높이 540px 이하) */
 @media (max-height: 540px) and (orientation: landscape) {
   body:has(#gameScreen:not(.hidden)) .google-ad-footer {
@@ -3050,18 +3085,20 @@ select,
   }
   .canvas-frame {
     position: relative !important;
-    flex: 1 1 0 !important;
+    flex: 0 1 auto !important;
     min-height: 0 !important;
+    width: auto !important;
     height: 100% !important;
-    max-height: none !important;
-    aspect-ratio: auto !important;
+    max-width: 100% !important;
+    max-height: 100% !important;
+    aspect-ratio: 16 / 9 !important;
   }
   #gameCanvas {
     position: absolute !important;
     inset: 0 !important;
     width: 100% !important;
     height: 100% !important;
-    object-fit: fill !important;
+    object-fit: contain !important;
   }
   .floating-top-hud {
     top: 4px !important;
@@ -3200,5 +3237,32 @@ select,
     padding: 8px 14px !important;
     font-size: 12.5px !important;
     white-space: nowrap !important;
+  }
+}
+
+/* 좁은 스테이지에서는 체력바와 고각·구슬 버튼이 같은 줄을 차지하지 않는다. */
+@media (max-height: 400px) and (orientation: landscape) {
+  .floating-bottom-hp-hud {
+    max-width: calc(100% - 24px) !important;
+  }
+  .floating-corner-card {
+    bottom: 44px !important;
+  }
+  .floating-bottom-hp-hud .hud-player,
+  .floating-bottom-hp-hud .hud-p-info {
+    min-width: 0 !important;
+  }
+}
+
+@media (max-width: 500px) and (orientation: portrait) {
+  .floating-bottom-hp-hud {
+    max-width: calc(100% - 24px) !important;
+  }
+  .floating-corner-card {
+    bottom: 60px !important;
+  }
+  .floating-bottom-hp-hud .hud-player,
+  .floating-bottom-hp-hud .hud-p-info {
+    min-width: 0 !important;
   }
 }

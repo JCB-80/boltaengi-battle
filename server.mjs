@@ -18,6 +18,8 @@ const MIME_MAP = {
   '.jpeg': 'image/jpeg',
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
+  '.mp3': 'audio/mpeg',
+  '.ogg': 'audio/ogg',
   '.apk': 'application/vnd.android.package-archive',
 };
 
@@ -41,6 +43,7 @@ function randomCode(len = 6) {
 }
 
 export function startBattleServer(port = 8791, host = '127.0.0.1', options = {}) {
+  const staticRoot = fs.realpathSync(path.resolve(options.staticRoot || ROOT_DIR));
   const store =
     options.store ||
     new BattlePersistentStore({
@@ -49,30 +52,42 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
   const rooms = new Map();
   const challenges = new Map();
   const MAX_ROOMS = 24;
-  const ROOM_TTL_MS = 15 * 60 * 1000;
+  const now = options.now || Date.now;
+  const ROOM_IDLE_MS = options.roomIdleMs ?? 90_000;
+  const FINISHED_TTL_MS = options.finishedRoomTtlMs ?? 120_000;
+  const WAITING_MAX_MS = 10 * 60_000;
+  const ACTIVE_MAX_MS = 30 * 60_000;
+  const CHALLENGE_TTL_MS = 120_000;
 
-  function settleRoomRewardsIfEnded(rm) {
-    if (!rm || !rm.sim || rm.matchRewarded) return;
-    const snap = rm.sim.snapshot();
-    if (snap.phase !== 'GAME_OVER') return;
-    rm.matchRewarded = true;
-    const winnerSlot = snap.winnerSlot;
-    rm.players.forEach((p, idx) => {
-      if (!p || !p.accountToken) return;
-      const isWinner = winnerSlot === idx;
-      try {
-        store.applyReward({
-          accountToken: p.accountToken,
-          accountId: p.accountId,
-          idempotencyKey: `match:${rm.id}:slot:${idx}`,
-          deltaXp: isWinner ? 120 : 40,
-          win: isWinner,
-          matchCompleted: true,
-        });
-      } catch {
-        // 보상 중복 또는 토큰 만료 시 무시
-      }
-    });
+  function finishRoomIfEnded(rm) {
+    if (!rm.sim || rm.sim.phase !== 'GAME_OVER') return;
+    if (rm.status !== 'FINISHED') {
+      rm.status = 'FINISHED';
+      rm.finishedAt = now();
+      if (rm.tickTimer) clearInterval(rm.tickTimer);
+      rm.tickTimer = null;
+    }
+    if (!rm.matchRewarded) {
+      rm.matchRewarded = true;
+      const snap = rm.sim.snapshot();
+      const winnerSlot = snap.winnerSlot;
+      rm.players.forEach((p, idx) => {
+        if (!p || !p.accountToken || !p.accountId) return;
+        const isWinner = winnerSlot === idx;
+        try {
+          store.applyReward({
+            accountToken: p.accountToken,
+            accountId: p.accountId,
+            idempotencyKey: `match:${rm.id}:slot:${idx}`,
+            deltaXp: isWinner ? 120 : 35,
+            win: isWinner,
+            matchCompleted: true,
+          });
+        } catch {
+          // 중복 정산 또는 만료 토큰 무시
+        }
+      });
+    }
   }
 
   function startRoomMatch(rm) {
@@ -82,21 +97,52 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
     rm.tickTimer = setInterval(() => {
       if (rm.sim) {
         rm.sim.tick();
-        settleRoomRewardsIfEnded(rm);
+        finishRoomIfEnded(rm);
       }
     }, 1000 / 60);
-    rm.lastActivity = Date.now();
+    rm.startedAt = now();
   }
 
   function cleanupExpiredRooms() {
-    const now = Date.now();
+    const current = now();
+    for (const [cid, ch] of challenges) {
+      if (current - ch.createdAt >= CHALLENGE_TTL_MS || !rooms.has(ch.roomId)) challenges.delete(cid);
+    }
     for (const [id, rm] of rooms.entries()) {
-      if (now - rm.createdAt > ROOM_TTL_MS && now - rm.lastActivity > 5 * 60 * 1000) {
+      if (rm.status === 'FINISHED') {
+        if (current - rm.finishedAt >= FINISHED_TTL_MS) rooms.delete(id);
+        continue;
+      }
+      const expired = [...rm.lastSeen.entries()]
+        .filter(([, seen]) => current - seen >= ROOM_IDLE_MS)
+        .map(([token]) => token);
+      if (!rm.sim && (current - rm.createdAt >= WAITING_MAX_MS || expired.some((token) => rm.tokens.get(token) === 0))) {
         if (rm.tickTimer) clearInterval(rm.tickTimer);
         rooms.delete(id);
+        continue;
+      }
+      if (!rm.sim) {
+        // Remove inactive guests from a waiting room and reindex remaining slots.
+        for (const token of expired) {
+          const slot = rm.tokens.get(token);
+          rm.tokens.delete(token); rm.sequences.delete(token); rm.lastSeen.delete(token);
+          rm.players.splice(slot, 1);
+          for (const [other, index] of rm.tokens) if (index > slot) rm.tokens.set(other, index - 1);
+          rm.inviteConsumed = false;
+        }
+      } else if (rm.status === 'ACTIVE') {
+        const timedOut = current - rm.startedAt >= ACTIVE_MAX_MS ? [...rm.tokens.keys()] : expired;
+        const slots = timedOut.map((token) => rm.tokens.get(token)).filter((slot) => slot !== undefined);
+        for (const token of timedOut) {
+          rm.tokens.delete(token); rm.sequences.delete(token); rm.lastSeen.delete(token);
+        }
+        if (slots.length) rm.sim.forfeitSlots(slots);
+        finishRoomIfEnded(rm);
       }
     }
   }
+
+  const maintenanceTimer = setInterval(cleanupExpiredRooms, options.maintenanceIntervalMs ?? 1000);
 
   function resolveBearer(req) {
     const auth = req.headers.authorization || '';
@@ -133,6 +179,7 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
 
       const urlObj = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`);
       const pathname = urlObj.pathname;
+      if (pathname.startsWith('/api/battle/')) cleanupExpiredRooms();
 
       // 1) /battle -> /battle/ 리다이렉트 & 정적 파일 서빙
       if (pathname === '/battle') {
@@ -143,13 +190,23 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
       if (req.method === 'GET' && (pathname === '/' || pathname.startsWith('/battle/') || STATIC_PREFIXES.some((p) => pathname.slice(1).startsWith(p)) || STATIC_FILES.has(pathname.slice(1)))) {
         let rel = pathname === '/' || pathname === '/battle/' ? 'index.html' : pathname.startsWith('/battle/') ? pathname.slice('/battle/'.length) : pathname.slice(1);
         rel = decodeURIComponent(rel).replace(/^\/+/, '');
+        if (rel.includes('\0') || rel.split(/[\\/]+/).some((part) => part === '..' || part === '.')) {
+          return sendJson(404, { error: 'NOT_FOUND' });
+        }
         if (!STATIC_FILES.has(rel) && !STATIC_PREFIXES.some((p) => rel.startsWith(p))) {
           return sendJson(404, { error: 'NOT_FOUND' });
         }
-        const resolved = path.resolve(ROOT_DIR, rel);
-        if (!resolved.startsWith(ROOT_DIR) || !fs.existsSync(resolved) || fs.statSync(resolved).isDirectory()) {
+        const resolved = path.resolve(staticRoot, rel);
+        const relative = path.relative(staticRoot, resolved);
+        if (!relative || relative.startsWith(`..${path.sep}`) || relative === '..' || path.isAbsolute(relative) ||
+            !fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
           return sendJson(404, { error: 'NOT_FOUND' });
         }
+        // Do not serve a symlink/junction to private files, even when its
+        // apparent URL is inside an allowed static directory.
+        const realFile = fs.realpathSync(resolved);
+        const normal = (p) => process.platform === 'win32' ? path.normalize(p).toLowerCase() : path.normalize(p);
+        if (normal(realFile) !== normal(resolved)) return sendJson(404, { error: 'NOT_FOUND' });
         const ext = path.extname(resolved).toLowerCase();
         res.writeHead(200, {
           'Content-Type': MIME_MAP[ext] || 'application/octet-stream',
@@ -178,7 +235,7 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
         for (const rm of rooms.values()) {
           if (
             !rm.inviteConsumed &&
-            (rm.status === 'WAITING_GUEST' || rm.status === 'WAITING_APPROVAL' || rm.status === 'ACTIVE') &&
+            (rm.status === 'WAITING_GUEST' || rm.status === 'WAITING_APPROVAL') &&
             rm.players.length < (rm.maxPlayers || 2)
           ) {
             openRooms.push({
@@ -206,27 +263,53 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
         return sendJson(200, { account });
       }
 
-      // 2.6) 실시간 승률 순위표 GET /api/battle/leaderboard
+      if (req.method === 'DELETE' && pathname === '/api/battle/accounts/me') {
+        const account = store.deleteAccount(resolveBearer(req));
+        // Remove live state containing the account as well as its persisted record.
+        const removedRoomIds = new Set();
+        for (const [id, rm] of rooms) {
+          if (rm.players.some(p => p && p.accountId === account.accountId)) {
+            if (rm.tickTimer) clearInterval(rm.tickTimer);
+            rooms.delete(id);
+            removedRoomIds.add(id);
+          }
+        }
+        for (const [id, ch] of challenges) {
+          if (ch.targetUserId === account.userId.toLowerCase() ||
+              String(ch.from?.userId || '').toLowerCase() === account.userId.toLowerCase() ||
+              removedRoomIds.has(ch.roomId)) challenges.delete(id);
+        }
+        return sendJson(200, { deleted: true });
+      }
+
+      // 2.6) 실시간 점수 · 승률 · 계급 순위표 GET /api/battle/leaderboard
       if (req.method === 'GET' && pathname === '/api/battle/leaderboard') {
-        const scope = urlObj.searchParams.get('scope') || 'all';
-        const schoolName = urlObj.searchParams.get('schoolName') || '';
-        const className = urlObj.searchParams.get('className') || '';
-        const result = store.getLeaderboard({ scope, schoolName, className, limit: 20 });
-        return sendJson(200, result);
+        const scope = String(urlObj.searchParams.get('scope') || 'all');
+        const schoolName = String(urlObj.searchParams.get('schoolName') || '').trim();
+        const className = String(urlObj.searchParams.get('className') || '').trim();
+        const { leaderboard, schoolTop, classTop } = store.getLeaderboard({
+          scope,
+          schoolName,
+          className,
+          limit: 20,
+        });
+        return sendJson(200, {
+          leaderboard,
+          schoolTop,
+          classTop,
+          rankedRewardsEnabled: true,
+        });
       }
 
       // 2.7) 대기 중인 대결 요청 조회 GET /api/battle/challenges/pending?userId=...
       if (req.method === 'GET' && pathname === '/api/battle/challenges/pending') {
+        const account = store.authenticateAccount(resolveBearer(req));
         const uid = String(urlObj.searchParams.get('userId') || '').trim().toLowerCase();
-        if (!uid) return sendJson(200, { challenge: null });
-        const now = Date.now();
+        if (uid && uid !== String(account.userId).toLowerCase()) return sendJson(403, { error: 'FORBIDDEN_ACCOUNT' });
+        const targetId = String(account.userId).toLowerCase();
         let found = null;
         for (const [cid, ch] of challenges.entries()) {
-          if (now - ch.createdAt > 120000) {
-            challenges.delete(cid);
-            continue;
-          }
-          if (ch.targetUserId === uid && ch.status === 'PENDING') {
+          if (ch.targetUserId === targetId && ch.status === 'PENDING') {
             found = ch;
             break;
           }
@@ -243,13 +326,14 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
         const token = resolveBearer(req);
         const slot = rm.tokens.get(token);
         if (slot === undefined) return sendJson(401, { error: 'UNAUTHORIZED' });
-        rm.lastActivity = Date.now();
+        if (rm.status !== 'FINISHED') rm.lastSeen.set(token, now());
         return sendJson(200, {
           roomId: rm.id,
           roomTitle: rm.roomTitle || `${rm.players[0]?.name || '호스트'}의 방`,
           status: rm.status,
           slot,
           maxPlayers: rm.maxPlayers,
+          rankedRewardsEnabled: false,
           inviteCode: rm.inviteCode,
           approvalCode: slot === 0 && rm.status === 'WAITING_APPROVAL' ? rm.approvalCode : undefined,
           players: rm.players.map((p, idx) => ({ slot: idx, name: p.name, charKey: p.charKey })),
@@ -279,37 +363,19 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
           nickname: body.nickname,
           schoolName: body.schoolName,
           className: body.className,
+          accountToken: resolveBearer(req),
         });
         return sendJson(result.created ? 201 : 200, result);
       }
 
       // 3.6) 멱등 전적/XP 보상 POST /api/battle/accounts/reward
       if (pathname === '/api/battle/accounts/reward') {
-        const accountToken = resolveBearer(req);
-        const result = store.applyReward({
-          accountToken,
-          accountId: body.accountId || null,
-          idempotencyKey: body.idempotencyKey,
-          deltaXp: body.deltaXp,
-          win: Boolean(body.win),
-          matchCompleted: body.matchCompleted !== false,
-          expectedVersion: body.expectedVersion,
-        });
-        return sendJson(200, result);
+        return sendJson(403, { error: 'SERVER_MATCH_REWARDS_ONLY' });
       }
 
       // 3.7) 기존 localStorage 진행도 1회 멱등 이관 POST /api/battle/accounts/migrate-local
       if (pathname === '/api/battle/accounts/migrate-local') {
-        const accountToken = resolveBearer(req);
-        const result = store.migrateLocalProgress({
-          accountToken,
-          idempotencyKey: body.idempotencyKey,
-          localXp: body.localXp,
-          localWins: body.localWins,
-          localMatches: body.localMatches,
-          expectedVersion: body.expectedVersion,
-        });
-        return sendJson(200, result);
+        return sendJson(403, { error: 'UNVERIFIED_LOCAL_PROGRESS_DISABLED' });
       }
 
       // 4) 방 생성 POST /api/battle/rooms
@@ -355,8 +421,8 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
           sequences: new Map([[hostToken, 0]]),
           sim: null,
           tickTimer: null,
-          createdAt: Date.now(),
-          lastActivity: Date.now(),
+          createdAt: now(),
+          lastSeen: new Map([[hostToken, now()]]),
         };
         rooms.set(roomId, rm);
 
@@ -381,7 +447,7 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
           if (
             rm.inviteCode === code &&
             !rm.inviteConsumed &&
-            (rm.status === 'WAITING_GUEST' || rm.status === 'WAITING_APPROVAL' || rm.status === 'ACTIVE') &&
+            (rm.status === 'WAITING_GUEST' || rm.status === 'WAITING_APPROVAL') &&
             rm.players.length < (rm.maxPlayers || 2)
           ) {
             targetRoom = rm;
@@ -392,13 +458,17 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
 
         const assignedSlot = targetRoom.players.length;
         const guestToken = randomToken();
-        targetRoom.tokens.set(guestToken, assignedSlot);
         let guestAccount = null;
         const guestAccountToken = body.accountToken ? String(body.accountToken) : '';
         if (guestAccountToken) {
           guestAccount = store.authenticateAccount(guestAccountToken);
         }
+        if (guestAccount && targetRoom.players.some(p => p.accountId === guestAccount.accountId)) {
+          return sendJson(409, { error: 'ACCOUNT_ALREADY_IN_ROOM' });
+        }
+        targetRoom.tokens.set(guestToken, assignedSlot);
         targetRoom.sequences.set(guestToken, 0);
+        targetRoom.lastSeen.set(guestToken, now());
         const newPlayer = {
           charKey: String(body.charKey || (assignedSlot === 1 ? 'M05_SODAPIN' : 'M02_PUDDING')),
           name: String(body.name || (guestAccount && guestAccount.nickname) || `플레이어${assignedSlot + 1}`).slice(0, 18),
@@ -410,8 +480,6 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
 
         if (targetRoom.inviteConsumed && targetRoom.status !== 'ACTIVE') {
           startRoomMatch(targetRoom);
-        } else {
-          targetRoom.lastActivity = Date.now();
         }
 
         return sendJson(200, {
@@ -460,29 +528,60 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
 
         const result = rm.sim.act(slot, body);
         rm.sequences.set(token, seq);
-        rm.lastActivity = Date.now();
+        rm.lastSeen.set(token, now());
         return sendJson(200, { accepted: true, seq, ...result });
+      }
+
+      // Explicit leave is a forfeit in an active match and releases a waiting slot.
+      const leaveMatch = pathname.match(/^\/api\/battle\/rooms\/([A-Za-z0-9_-]+)\/leave$/);
+      if (leaveMatch) {
+        const rm = rooms.get(leaveMatch[1]);
+        if (!rm) return sendJson(404, { error: 'ROOM_NOT_FOUND' });
+        const token = resolveBearer(req);
+        const slot = rm.tokens.get(token);
+        if (slot === undefined) return sendJson(401, { error: 'UNAUTHORIZED' });
+        rm.tokens.delete(token); rm.sequences.delete(token); rm.lastSeen.delete(token);
+        if (rm.status === 'ACTIVE') {
+          rm.sim.forfeitSlots([slot]);
+          finishRoomIfEnded(rm);
+        } else if (!rm.sim && slot === 0) {
+          rooms.delete(rm.id);
+        } else if (!rm.sim) {
+          rm.players.splice(slot, 1);
+          for (const [other, index] of rm.tokens) if (index > slot) rm.tokens.set(other, index - 1);
+          rm.inviteConsumed = false;
+        }
+        return sendJson(200, { left: true });
       }
 
       // 8) 대결 요청 보내기 POST /api/battle/challenges
       if (pathname === '/api/battle/challenges') {
+        const account = store.authenticateAccount(resolveBearer(req));
         const targetUserId = String(body.targetUserId || '').trim().toLowerCase();
         const inviteCode = String(body.inviteCode || '').trim().toUpperCase();
         if (!targetUserId || !inviteCode) return sendJson(400, { error: 'MISSING_CHALLENGE_FIELDS' });
+        const rm = rooms.get(String(body.roomId || ''));
+        if (!rm || rm.status !== 'WAITING_GUEST' || rm.inviteCode !== inviteCode ||
+            rm.players[0]?.accountId !== account.accountId) return sendJson(403, { error: 'FORBIDDEN_ROOM' });
+        if (targetUserId === String(account.userId).toLowerCase()) return sendJson(400, { error: 'SELF_CHALLENGE' });
+        if (challenges.size >= 500) return sendJson(429, { error: 'CHALLENGE_LIMIT' });
+        if ([...challenges.values()].some((ch) => ch.roomId === rm.id && ch.status === 'PENDING')) {
+          return sendJson(429, { error: 'CHALLENGE_ALREADY_PENDING' });
+        }
         const cid = `chg_${randomCode(6)}`;
         const ch = {
           id: cid,
           targetUserId,
           inviteCode,
-          roomId: String(body.roomId || ''),
+          roomId: rm.id,
           from: {
-            userId: String(body.fromUserId || ''),
-            nickname: String(body.fromNickname || '도전자').slice(0, 18),
-            schoolName: String(body.fromSchool || '').slice(0, 32),
-            className: String(body.fromClass || '').slice(0, 24),
+            userId: account.userId,
+            nickname: account.nickname,
+            schoolName: account.schoolName || '',
+            className: account.className || '',
           },
           status: 'PENDING',
-          createdAt: Date.now(),
+          createdAt: now(),
         };
         challenges.set(cid, ch);
         return sendJson(201, { challenge: ch });
@@ -491,8 +590,11 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
       // 9) 대결 요청 응답 POST /api/battle/challenges/:id/respond
       const chgRespMatch = pathname.match(/^\/api\/battle\/challenges\/([A-Za-z0-9_-]+)\/respond$/);
       if (chgRespMatch) {
+        const account = store.authenticateAccount(resolveBearer(req));
         const ch = challenges.get(chgRespMatch[1]);
         if (!ch) return sendJson(404, { error: 'CHALLENGE_NOT_FOUND' });
+        if (ch.targetUserId !== String(account.userId).toLowerCase()) return sendJson(403, { error: 'FORBIDDEN_ACCOUNT' });
+        if (ch.status !== 'PENDING') return sendJson(409, { error: 'CHALLENGE_ALREADY_RESPONDED' });
         ch.status = body.accept ? 'ACCEPTED' : 'DECLINED';
         return sendJson(200, { challenge: ch });
       }
@@ -507,6 +609,7 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
   });
 
   server.on('close', () => {
+    clearInterval(maintenanceTimer);
     for (const rm of rooms.values()) {
       if (rm.tickTimer) clearInterval(rm.tickTimer);
     }

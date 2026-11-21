@@ -1,13 +1,19 @@
 package com.boltaengi.battle;
 
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.ActivityNotFoundException;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.ActivityInfo;
+import android.graphics.Color;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.view.View;
+import android.view.Gravity;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
@@ -16,9 +22,97 @@ import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.WebResourceError;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
+import android.widget.Button;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.HashMap;
+import java.util.Map;
 
 public class MainActivity extends Activity {
+    private static final String GAME_URL = "https://43.203.70.197.sslip.io/battle/";
     private WebView webView;
+    private View networkErrorView;
+    private boolean mainFrameFailed;
+
+    private boolean isGameUrl(Uri uri) {
+        if (uri == null) return false;
+        String path = uri.getPath();
+        return "https".equalsIgnoreCase(uri.getScheme())
+            && "43.203.70.197.sslip.io".equalsIgnoreCase(uri.getHost())
+            && (uri.getPort() == -1 || uri.getPort() == 443)
+            && path != null && (path.equals("/battle") || path.startsWith("/battle/"));
+    }
+
+    private WebResourceResponse missingBundledResource() {
+        Map<String, String> headers = new HashMap<>();
+        headers.put("Cache-Control", "no-store");
+        return new WebResourceResponse("text/plain", "UTF-8", 404, "Not Found", headers,
+            new java.io.ByteArrayInputStream(new byte[0]));
+    }
+
+    // 앱과 함께 묶은 정적 게임 파일만 제공한다. API는 기존 서버로 전송된다.
+    // 동일 HTTPS origin을 유지하므로 기존 WebView 저장 데이터가 보존된다.
+    private WebResourceResponse bundledGameResource(WebResourceRequest request) {
+        Uri uri = request.getUrl();
+        if (!"GET".equals(request.getMethod()) || !isGameUrl(uri)) return null;
+        String path = uri.getPath();
+        String relative = path.equals("/battle") || path.equals("/battle/")
+            ? "index.html" : path.substring("/battle/".length());
+        if (relative.indexOf('\\') >= 0 || relative.indexOf('\0') >= 0) return missingBundledResource();
+        for (String part : relative.split("/")) {
+            if (part.equals(".") || part.equals("..") || part.isEmpty()) return missingBundledResource();
+        }
+        boolean allowed = relative.equals("index.html") || relative.equals("privacy.html")
+            || relative.startsWith("src/") || relative.startsWith("styles/")
+            || relative.startsWith("assets/") || relative.startsWith("vendor/");
+        if (!allowed) return missingBundledResource();
+        String lower = relative.toLowerCase(java.util.Locale.ROOT);
+        String mime = lower.endsWith(".html") ? "text/html"
+            : lower.endsWith(".js") ? "text/javascript"
+            : lower.endsWith(".css") ? "text/css"
+            : lower.endsWith(".json") ? "application/json"
+            : lower.endsWith(".png") ? "image/png"
+            : lower.endsWith(".jpg") || lower.endsWith(".jpeg") ? "image/jpeg"
+            : lower.endsWith(".mp3") ? "audio/mpeg"
+            : lower.endsWith(".ogg") ? "audio/ogg"
+            : "application/octet-stream";
+        String encoding = mime.startsWith("text/") || mime.equals("application/json") ? "UTF-8" : null;
+        Map<String, String> headers = new HashMap<>();
+        headers.put("Cache-Control", "no-store");
+        try {
+            InputStream content = getAssets().open("web/" + relative);
+            return new WebResourceResponse(mime, encoding, 200, "OK", headers, content);
+        } catch (IOException missing) {
+            // 잘못 묶인 파일을 운영 서버의 오래된 파일로 조용히 대체하지 않는다.
+            return missingBundledResource();
+        }
+    }
+
+    private View createNetworkErrorView() {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setGravity(Gravity.CENTER);
+        panel.setPadding(32, 32, 32, 32);
+        panel.setBackgroundColor(Color.rgb(17, 24, 39));
+        TextView message = new TextView(this);
+        message.setText("게임에 연결할 수 없습니다.\n네트워크를 확인하고 다시 시도해 주세요.");
+        message.setTextColor(Color.WHITE);
+        message.setTextSize(18);
+        message.setGravity(Gravity.CENTER);
+        panel.addView(message);
+        Button retry = new Button(this);
+        retry.setText("다시 시도");
+        retry.setOnClickListener(v -> webView.loadUrl(GAME_URL));
+        panel.addView(retry);
+        panel.setVisibility(View.GONE);
+        return panel;
+    }
 
     public class AndroidBridge {
         @JavascriptInterface
@@ -89,14 +183,74 @@ public class MainActivity extends Activity {
         s.setUseWideViewPort(true);
         s.setLoadWithOverviewMode(true);
         s.setCacheMode(WebSettings.LOAD_NO_CACHE);
+        s.setAllowFileAccess(false);
+        s.setAllowContentAccess(false);
 
         webView.setFitsSystemWindows(true);
         webView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
-        webView.setWebViewClient(new WebViewClient());
+        webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                return bundledGameResource(request);
+            }
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                if (!request.isForMainFrame()) return false;
+                Uri uri = request.getUrl();
+                if (isGameUrl(uri)) return false;
+                if ("https".equalsIgnoreCase(uri.getScheme()) || "mailto".equalsIgnoreCase(uri.getScheme())) {
+                    try {
+                        startActivity(new Intent(Intent.ACTION_VIEW, uri));
+                    } catch (ActivityNotFoundException ignored) {
+                        // No browser installed; keep the current game screen.
+                    }
+                }
+                return true;
+            }
+
+            @Override
+            public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+                // Some main-frame redirects or POST navigations do not invoke
+                // shouldOverrideUrlLoading. Never expose the JS bridge to another origin.
+                if (!isGameUrl(Uri.parse(url))) {
+                    view.stopLoading();
+                    mainFrameFailed = true;
+                    networkErrorView.setVisibility(View.VISIBLE);
+                    return;
+                }
+                mainFrameFailed = false;
+                networkErrorView.setVisibility(View.GONE);
+            }
+
+            @Override
+            public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+                if (request.isForMainFrame()) {
+                    mainFrameFailed = true;
+                    networkErrorView.setVisibility(View.VISIBLE);
+                }
+            }
+
+            @Override
+            public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse response) {
+                if (request.isForMainFrame() && response.getStatusCode() >= 400) {
+                    mainFrameFailed = true;
+                    networkErrorView.setVisibility(View.VISIBLE);
+                }
+            }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                if (!mainFrameFailed) networkErrorView.setVisibility(View.GONE);
+            }
+        });
         webView.setWebChromeClient(new WebChromeClient());
-        setContentView(webView);
+        FrameLayout root = new FrameLayout(this);
+        root.addView(webView);
+        networkErrorView = createNetworkErrorView();
+        root.addView(networkErrorView);
+        setContentView(root);
         hideSystemBars();
-        webView.loadUrl("http://192.168.0.39:8791/battle/");
+        webView.loadUrl("https://43.203.70.197.sslip.io/battle/");
     }
 
     @Override
@@ -107,10 +261,20 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (webView != null && webView.canGoBack()) {
+        if (networkErrorView != null && networkErrorView.getVisibility() == View.VISIBLE) {
+            confirmExit();
+        } else if (webView != null && webView.canGoBack()) {
             webView.goBack();
         } else {
-            super.onBackPressed();
+            confirmExit();
         }
+    }
+
+    private void confirmExit() {
+        new AlertDialog.Builder(this)
+            .setMessage("게임을 종료할까요? 진행 중인 대전은 중단될 수 있습니다.")
+            .setNegativeButton("취소", null)
+            .setPositiveButton("종료", (dialog, which) -> finish())
+            .show();
     }
 }

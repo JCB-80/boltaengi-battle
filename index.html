@@ -7,27 +7,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Jua&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="./styles/main.css?v=69" />
+  <link rel="stylesheet" href="./styles/main.css?v=72" />
 </head>
 <body>
-  <!-- 0. 최초 구동 시 구글 전면 광고(Interstitial Ad) 게이트 -->
-  <div id="interstitialAdOverlay" class="interstitial-ad-backdrop" role="dialog" aria-label="구글 전면 광고">
-    <div class="interstitial-ad-topbar">
-      <span class="google-ad-badge">Google 전면 광고</span>
-      <button id="closeInterstitialBtn" type="button" class="interstitial-close-btn" disabled>⏳ 3초 후 닫기</button>
-    </div>
-    <div class="interstitial-ad-box">
-      <span class="interstitial-kicker">SPONSORED · FULLSCREEN INTERSTITIAL</span>
-      <div class="interstitial-ad-visual">📢</div>
-      <h2 class="interstitial-ad-title">Google AdSense / AdMob 전면 광고 영역</h2>
-      <p class="interstitial-ad-desc">
-        실제 배포 시 이 영역에 Google 전면 광고 태그를 연결하면<br />
-        광고 시청 후 로그인 · 회원가입 화면으로 자동 이동합니다.
-      </p>
-      <!-- 실제 AdSense/AdMob 전면 광고 코드 삽입 위치 -->
-    </div>
-  </div>
-
   <!-- 1. 게임 진입 전 로비 화면 (모드 · 캐릭터 · 지형 · AI 난이도 설정) -->
   <div id="lobbyScreen" class="lobby-screen">
     <div class="lobby-card">
@@ -42,6 +24,7 @@
           <span id="profileSummaryText" class="profile-summary-text">🏫 내 소속 정보를 불러오는 중...</span>
           <button id="lobbyBgmBtn" type="button" class="profile-edit-btn" title="로비 배경음 켜기/끄기">🎵 BGM</button>
           <button id="openProfileBtn" type="button" class="profile-edit-btn">✏️ 내 정보</button>
+          <a href="./privacy.html">개인정보처리방침 · 계정 삭제 안내</a>
         </div>
       </div>
 
@@ -215,6 +198,9 @@
           <div id="schoolTopBanner" style="font-size:11.5px; background:rgba(250,204,21,0.14); border:1px solid rgba(250,204,21,0.35); border-radius:8px; padding:5px 8px; color:#FEF08A;">
             👑 우리 학교 1등 확인 중...
           </div>
+          <div id="classTopBanner" style="font-size:11.5px; background:rgba(56,189,248,0.14); border:1px solid rgba(56,189,248,0.35); border-radius:8px; padding:5px 8px; color:#BAE6FD;">
+            🎓 우리 반 1등 확인 중...
+          </div>
           <div id="leaderboardList" style="display:flex; flex-direction:column; gap:4px; max-height:165px; overflow-y:auto;"></div>
         </div>
       </div>
@@ -384,7 +370,6 @@
             <h2 id="winnerHeadline" class="modal-title">승리!</h2>
             <p class="modal-sub">상대 아래 빵을 깎아 떨어뜨리거나 간식 블록을 무너뜨려 보세요!</p>
             <div class="modal-actions">
-              <button id="rewardAdBtn" type="button" class="secondary-btn">📺 광고 보고 +50 XP</button>
               <button id="modalRestartBtn" type="button" class="primary-fire-btn">다시 하기</button>
               <button id="modalLobbyBtn" type="button" class="secondary-btn">로비로</button>
             </div>
@@ -461,6 +446,9 @@
           <button type="submit" class="primary-fire-btn">💾 등록 완료</button>
           <button id="closeProfileModalBtn" type="button" class="secondary-btn">닫기</button>
         </div>
+        <p id="accountStatusText" class="modal-sub" role="status" aria-live="polite"></p>
+        <button id="deleteAccountBtn" type="button" class="secondary-btn">계정 및 서버 전적 삭제</button>
+        <p class="modal-sub"><a href="./privacy.html#account-deletion">계정 삭제 요청 및 개인정보 안내</a></p>
       </form>
     </div>
   </div>
@@ -520,39 +508,7 @@
     </div>
   </div>
 
-  <!-- 6. 보상형 동영상 광고(Rewarded Ad) 오버레이 -->
-  <div id="rewardAdOverlay" class="interstitial-ad-backdrop hidden" role="dialog" aria-label="보상형 광고">
-    <div class="interstitial-ad-topbar">
-      <span class="google-ad-badge">Google 보상형 광고</span>
-      <button id="closeRewardAdBtn" type="button" class="interstitial-close-btn" disabled>⏳ 5초 후 보상 받기</button>
-    </div>
-    <div class="interstitial-ad-box">
-      <span class="interstitial-kicker">REWARDED AD · +50 XP BONUS</span>
-      <div class="interstitial-ad-visual">🎁</div>
-      <h2 class="interstitial-ad-title">보상형 광고 시청 중</h2>
-      <p class="interstitial-ad-desc">
-        5초 시청 완료 시 경험치 <strong>+50 XP</strong> 보상이 즉시 지급됩니다!
-      </p>
-    </div>
-  </div>
-
-  <!-- 7. 최하단 구글 애드센스(AdSense) 배너 광고 슬롯 -->
-  <aside id="googleAdFooterSlot" class="google-ad-footer" aria-label="광고 영역">
-    <div class="google-ad-container">
-      <span class="google-ad-badge">AD</span>
-      <span class="google-ad-label">Google AdSense 배너 광고 자리 (모바일 320×50 · PC 728×90)</span>
-      <!-- 실제 AdSense 적용 시 아래 주석을 해제하고 data-ad-client / data-ad-slot을 입력하세요.
-      <ins class="adsbygoogle"
-           style="display:block"
-           data-ad-client="ca-pub-XXXXXXXXXXXXXXXX"
-           data-ad-slot="XXXXXXXXXX"
-           data-ad-format="auto"
-           data-full-width-responsive="true"></ins>
-      -->
-    </div>
-  </aside>
-
   <script src="./vendor/matter.min.js"></script>
-  <script type="module" src="./src/main.js?v=50"></script>
+  <script type="module" src="./src/main.js?v=51"></script>
 </body>
 </html>

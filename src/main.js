@@ -17,7 +17,6 @@ import {
   subscribeChallenges,
   searchKoreanSchools,
 } from './social.js?v=30';
-import { initBannerAd, runAdCountdown } from './ads.js?v=46';
 import { OnlineBattleClient } from './onlineAdapter.js';
 
 const canvas = document.getElementById('gameCanvas');
@@ -78,6 +77,8 @@ const ui = {
   profileModal: document.getElementById('profileModal'),
   profileForm: document.getElementById('profileForm'),
   closeProfileModalBtn: document.getElementById('closeProfileModalBtn'),
+  deleteAccountBtn: document.getElementById('deleteAccountBtn'),
+  accountStatusText: document.getElementById('accountStatusText'),
   profUserId: document.getElementById('profUserId'),
   profNickname: document.getElementById('profNickname'),
   profSchool: document.getElementById('profSchool'),
@@ -159,6 +160,7 @@ const ui = {
   createClassOnlineRoomBtn: document.getElementById('createClassOnlineRoomBtn'),
   schoolOpenRoomsList: document.getElementById('schoolOpenRoomsList'),
   schoolTopBanner: document.getElementById('schoolTopBanner'),
+  classTopBanner: document.getElementById('classTopBanner'),
   lbScopeBtns: document.querySelectorAll('.lb-scope-btn'),
   leaderboardList: document.getElementById('leaderboardList'),
 
@@ -375,14 +377,16 @@ function syncHud(state) {
     .map((a) => `<div class="env-alert ${a.cls}">${a.text}</div>`)
     .join('');
 
-  // 3) 게임 오버 모달
+  // 3) 게임 오버 모달 (승리 시 경험치 + 계급 반영 표시)
   if (phase === 'GAME_OVER') {
     if (!matchOutcomeRecorded) {
       matchOutcomeRecorded = true;
       recordCurrentMatchOutcome(state);
     }
+    const rk = engine.getRankInfo?.()?.current;
+    const rankTxt = rk ? `${rk.badge} Lv.${rk.level} ${rk.title}` : '';
     const statsTxt = formatWinRateText(getCachedAccountStats());
-    ui.winnerHeadline.textContent = `${winnerText} · ${statsTxt}`;
+    ui.winnerHeadline.textContent = `${winnerText} · ${rankTxt} (${statsTxt})`;
     ui.gameOverModal.classList.remove('hidden');
   } else {
     matchOutcomeRecorded = false;
@@ -624,7 +628,7 @@ canvas.addEventListener('pointerdown', (e) => {
   } catch {
     // ignore pointer capture errors
   }
-  pointerAnchor = pt;
+  pointerAnchor = { ...pt, clientX: e.clientX, clientY: e.clientY };
 
   const muzzle = engine.activeActor.getMuzzlePosition();
   engine.dragState.active = true;
@@ -661,12 +665,13 @@ function endPointerDrag(e) {
   if (!pointerAnchor || !engine.dragState.active) return;
   const pt = toWorldCoords(e.clientX, e.clientY);
   const pullDist = Math.hypot(pointerAnchor.x - pt.x, pointerAnchor.y - pt.y);
+  const screenPull = Math.hypot(pointerAnchor.clientX - e.clientX, pointerAnchor.clientY - e.clientY);
 
   pointerAnchor = null;
   engine.dragState.active = false;
 
   // 충분히 당겼다가 놓았을 때 즉시 발사 (짧게 취소하면 조준값만 유지)
-  if (pullDist >= 28 && engine.phase === 'AIM' && engine.activeActor?.controller === 'human') {
+  if (pullDist >= 28 && screenPull >= 12 && engine.phase === 'AIM' && engine.activeActor?.controller === 'human') {
     engine.fireActiveActor();
   } else {
     engine.notifyHud();
@@ -846,8 +851,11 @@ function formatWinRateText(stats) {
   return `${score}점 · ${matches}전 ${wins}승 (${pct}%)`;
 }
 
+let accountDeletionInProgress = false;
+const pendingAccountSyncs = new Set();
 async function syncProfileWithServer(prof) {
-  if (!prof?.userId) return;
+  if (!prof?.userId || accountDeletionInProgress) return;
+  const sync = (async () => {
   try {
     const acc = await onlineClient.syncAccount(prof);
     if (acc) {
@@ -855,34 +863,48 @@ async function syncProfileWithServer(prof) {
       refreshProfileUi();
       refreshLeaderboard?.(true);
     }
-  } catch {
-    // 오프라인/서버 미연결 시 로컬 캐시 유지
+  } catch (err) {
+    if (err.message === 'ACCOUNT_RECOVERY_REQUIRED' || err.message === 'USER_ID_TAKEN' || err.message === 'UNAUTHORIZED') {
+      if (ui.accountStatusText) ui.accountStatusText.textContent = '기존 계정의 인증을 확인할 수 없습니다. 개인정보 안내의 문의처로 계정 복구 또는 삭제를 요청해 주세요.';
+      ui.profileSummaryText.textContent = '계정 인증 확인 필요 · 내 정보에서 안내 확인';
+    }
   }
+  })();
+  pendingAccountSyncs.add(sync);
+  try { await sync; } finally { pendingAccountSyncs.delete(sync); }
 }
 
 async function recordCurrentMatchOutcome(state) {
-  const prof = loadUserProfile();
-  if (!prof?.userId) return;
   const carts = Array.isArray(state?.carts) ? state.carts : [];
   const aliveHumans = carts.filter((c) => c.alive && c.controller === 'human');
   const won = aliveHumans.length > 0;
 
+  // 1) 로컬·온라인 공통: 승리할 때마다 경험치 획득 & 계급 시스템 즉시 반영
+  const xpGain = engine.isRemoteMatch ? (won ? 120 : 35) : (won ? 100 : 25);
+  engine.grantXp?.(xpGain, won ? '승리 보너스' : '참가 보너스');
+
+  const prof = loadUserProfile();
+  if (!prof?.userId) return;
+
   if (engine.isRemoteMatch) {
-    // 온라인 매치는 server.mjs settleRoomRewardsIfEnded가 이미 서버 계정에 반영함
+    // 온라인 대전은 server.mjs finishRoomIfEnded가 서버 권위로 공식 정산함 -> 최신 전적/랭킹 동기화
     setTimeout(async () => {
       try {
         const acc = await onlineClient.fetchMyAccount();
         if (acc) {
-          saveCachedAccountStats(prof.userId, { wins: acc.wins, matches: acc.matches });
-          refreshProfileUi();
-          if (!ui.gameOverModal.classList.contains('hidden')) {
-            ui.winnerHeadline.textContent = `${state.winnerText} · ${formatWinRateText(acc)}`;
+          saveCachedAccountStats(prof.userId, { wins: acc.wins, matches: acc.matches, score: acc.score });
+          if (typeof acc.xp === 'number' && acc.xp > engine.xp) {
+            engine.xp = acc.xp;
+            localStorage.setItem('puffpuff_xp', String(engine.xp));
+            engine.notifyHud?.();
           }
+          refreshProfileUi();
+          refreshLeaderboard?.(true);
         }
       } catch {
         // ignore
       }
-    }, 300);
+    }, 350);
     return;
   }
 
@@ -893,28 +915,16 @@ async function recordCurrentMatchOutcome(state) {
   };
   saveCachedAccountStats(prof.userId, optimistic);
   refreshProfileUi();
-  try {
-    const acc = await onlineClient.recordLocalMatchReward({
-      win: won,
-      deltaXp: won ? 80 : 25,
-    });
-    if (acc) {
-      saveCachedAccountStats(prof.userId, { wins: acc.wins, matches: acc.matches, score: acc.score });
-      refreshProfileUi();
-      refreshLeaderboard?.(true);
-    }
-  } catch {
-    // ignore
-  }
+  refreshLeaderboard?.(true);
 }
 
 function refreshProfileUi() {
   const prof = loadUserProfile();
   if (prof) {
     const winTxt = formatWinRateText(getCachedAccountStats(prof.userId));
-    ui.profileSummaryText.textContent = `🏫 ${shortSchoolLabel(prof.schoolName)} ${prof.className} · @${prof.userId} (${prof.nickname}) · 🏆 ${winTxt}`;
+    ui.profileSummaryText.textContent = `🏫 ${shortSchoolLabel(prof.schoolName)} ${prof.className} · @${prof.userId} (${prof.nickname}) · 비공식 기록 ${winTxt}`;
     ui.openProfileBtn.textContent = '✏️ 내 정보';
-    ui.mySchoolClassLabel.textContent = `${prof.schoolName} · ${prof.className} (${prof.nickname}) · ${winTxt}`;
+    ui.mySchoolClassLabel.textContent = `${prof.schoolName} · ${prof.className} (${prof.nickname}) · 비공식 기록 ${winTxt}`;
   } else {
     ui.profileSummaryText.textContent = '학교 · 반 정보 등록 필요';
     ui.openProfileBtn.textContent = '✏️ 내 정보';
@@ -922,10 +932,34 @@ function refreshProfileUi() {
   }
 }
 
+const DEVICE_BOUND_UID_KEY = 'puffpuff_bound_device_uid_v1';
+function getBoundDeviceUserId() {
+  try {
+    const bound = (localStorage.getItem(DEVICE_BOUND_UID_KEY) || '').trim();
+    if (bound) return bound;
+    const existing = loadUserProfile()?.userId;
+    if (existing) {
+      localStorage.setItem(DEVICE_BOUND_UID_KEY, existing);
+      return existing;
+    }
+  } catch {
+    // ignore
+  }
+  return '';
+}
+
 function openProfileModal(onDone = null, forceRequired = false) {
   pendingAfterProfile = onDone;
   const prof = loadUserProfile();
-  ui.profUserId.value = prof?.userId || '';
+  const boundUid = getBoundDeviceUserId();
+  ui.profUserId.value = boundUid || prof?.userId || '';
+  ui.profUserId.readOnly = Boolean(boundUid);
+  ui.profUserId.style.opacity = boundUid ? '0.78' : '1';
+  if (ui.accountStatusText) {
+    ui.accountStatusText.textContent = boundUid
+      ? `🔒 비밀번호 없이 자동 로그인 중 (@${boundUid}) · 이 기기에서는 계정 삭제 전까지 추가 아이디를 만들 수 없습니다.`
+      : '✨ 비밀번호 없이 아이디·학교·반만 입력하면 바로 등록됩니다. (1기기 1계정)';
+  }
   ui.profNickname.value = prof?.nickname || '';
   ui.profSchool.value = prof?.schoolName || '';
   const m = String(prof?.className || '').match(/(\d+)\s*학년\s*(\d+)\s*반/);
@@ -965,7 +999,7 @@ function bindSchoolAutocomplete(inputEl, listEl) {
         btn.type = 'button';
         btn.className = 'school-ac-item';
         const sub = [item.region, item.address].filter(Boolean).join(' · ');
-        btn.innerHTML = `<strong>🏫 ${item.name}</strong>${sub ? `<span>${sub}</span>` : ''}`;
+        btn.innerHTML = `<strong>🏫 ${escapePartyHtml(item.name)}</strong>${sub ? `<span>${escapePartyHtml(sub)}</span>` : ''}`;
         btn.addEventListener('click', () => {
           inputEl.value = item.name;
           listEl.classList.add('hidden');
@@ -1016,7 +1050,7 @@ function renderOpponentSearchList() {
 
     const meta = document.createElement('div');
     meta.className = 'opponent-meta';
-    meta.innerHTML = `<strong>${opp.nickname} (@${opp.userId})</strong><span>🏫 ${shortSchoolLabel(opp.schoolName)} · ${opp.className}</span>`;
+    meta.innerHTML = `<strong>${escapePartyHtml(opp.nickname)} (@${escapePartyHtml(opp.userId)})</strong><span>🏫 ${escapePartyHtml(shortSchoolLabel(opp.schoolName))} · ${escapePartyHtml(opp.className)}</span>`;
 
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -1345,16 +1379,77 @@ ui.closeProfileModalBtn?.addEventListener('click', () => {
   pendingAfterProfile = null;
   ui.profileModal.classList.add('hidden');
 });
+ui.deleteAccountBtn?.addEventListener('click', async () => {
+  const profile = loadUserProfile();
+  if (!profile || profile.userId !== onlineClient.accountAuth?.userId) {
+    ui.accountStatusText.textContent = '이 기기에서 확인 가능한 계정 인증이 없습니다. 아래 삭제 요청 안내를 이용해 주세요.';
+    return;
+  }
+  if (!window.confirm('계정과 서버 전적을 삭제할까요? 삭제한 전적은 복구할 수 없습니다.')) return;
+  ui.deleteAccountBtn.disabled = true;
+  accountDeletionInProgress = true;
+  try {
+    await Promise.allSettled([...pendingAccountSyncs]);
+    if (profile.userId !== onlineClient.accountAuth?.userId) throw new Error('ACCOUNT_CHANGED');
+    const deletion = await onlineClient.deleteAccount();
+    let localCleanupFailed = Boolean(deletion?.localCleanupFailed);
+    try {
+      onlineClient.clearSession();
+      sessionStorage.removeItem('puffpuff_user_profile_v1');
+      localStorage.removeItem('puffpuff_user_profile_v1');
+      localStorage.removeItem(DEVICE_BOUND_UID_KEY);
+      localStorage.removeItem(getStatsStorageKey(profile.userId));
+      const key = 'puffpuff_community_users_v1';
+      const directory = JSON.parse(localStorage.getItem(key) || '[]');
+      if (Array.isArray(directory)) localStorage.setItem(key, JSON.stringify(directory.filter((p) => p.userId !== profile.userId)));
+    } catch {
+      localCleanupFailed = true;
+    }
+    refreshProfileUi();
+    renderOpponentSearchList();
+    refreshLeaderboard(true);
+    ui.accountStatusText.textContent = localCleanupFailed
+      ? '서버 계정은 삭제했습니다. 기기 정보는 앱 저장공간을 삭제해 정리해 주세요.'
+      : '계정 및 서버 전적을 삭제했습니다. 이제 새 아이디를 만들 수 있습니다.';
+    ui.profUserId.value = '';
+    ui.profUserId.readOnly = false;
+    ui.profUserId.style.opacity = '1';
+    ui.profNickname.value = '';
+    ui.profSchool.value = '';
+    ui.profGradeNum.value = '';
+    ui.profClassNum.value = '';
+  } catch {
+    ui.accountStatusText.textContent = '삭제하지 못했습니다. 연결 상태를 확인하거나 삭제 요청 안내를 이용해 주세요.';
+  } finally {
+    accountDeletionInProgress = false;
+    ui.deleteAccountBtn.disabled = false;
+  }
+});
 ui.profileForm?.addEventListener('submit', (e) => {
   e.preventDefault();
+  if (accountDeletionInProgress) return;
+  const boundUid = getBoundDeviceUserId();
+  const inputUid = String(ui.profUserId.value || '').trim();
+  if (boundUid && inputUid.toLowerCase() !== boundUid.toLowerCase()) {
+    if (ui.accountStatusText) {
+      ui.accountStatusText.textContent = `🔒 이 기기에는 이미 @${boundUid} 계정이 등록되어 있습니다. 새 아이디를 만들려면 먼저 계정을 삭제하세요.`;
+    }
+    ui.profUserId.value = boundUid;
+    return;
+  }
   const gNum = String(ui.profGradeNum.value || '').replace(/\D/g, '') || '3';
   const cNum = String(ui.profClassNum.value || '').replace(/\D/g, '') || '1';
   const savedProf = saveUserProfile({
-    userId: ui.profUserId.value,
+    userId: boundUid || inputUid,
     nickname: ui.profNickname.value,
     schoolName: ui.profSchool.value,
     className: `${gNum}학년 ${cNum}반`,
   });
+  try {
+    if (savedProf?.userId) localStorage.setItem(DEVICE_BOUND_UID_KEY, savedProf.userId);
+  } catch {
+    // ignore
+  }
   refreshProfileUi();
   syncProfileWithServer(savedProf);
   renderOpponentSearchList();
@@ -1414,41 +1509,7 @@ ui.backToLobbyBtn.addEventListener('click', returnToLobby);
 ui.modalLobbyBtn.addEventListener('click', returnToLobby);
 
 ui.restartBtn.addEventListener('click', restartWithCurrentOptions);
-let completedMatchCount = 0;
-ui.modalRestartBtn.addEventListener('click', () => {
-  completedMatchCount++;
-  // 2판마다 1회 판 종료 후 전면 광고 표시
-  if (completedMatchCount % 2 === 0 && ui.interstitialAdOverlay && ui.closeInterstitialBtn) {
-    runAdCountdown({
-      overlayEl: ui.interstitialAdOverlay,
-      closeBtnEl: ui.closeInterstitialBtn,
-      seconds: 3,
-      waitLabel: (s) => `⏳ ${s}초 후 닫기`,
-      readyLabel: '✕ 광고 닫고 다음 판',
-      onComplete: restartWithCurrentOptions,
-    });
-    return;
-  }
-  restartWithCurrentOptions();
-});
-
-ui.rewardAdBtn?.addEventListener('click', () => {
-  runAdCountdown({
-    overlayEl: ui.rewardAdOverlay,
-    closeBtnEl: ui.closeRewardAdBtn,
-    seconds: 5,
-    waitLabel: (s) => `⏳ ${s}초 후 보상 받기`,
-    readyLabel: '🎁 +50 XP 보상 받기!',
-    onComplete: () => {
-      engine.grantXp(50, '보상형 광고');
-      engine.audio.playSkillCharge();
-      if (ui.rewardAdBtn) {
-        ui.rewardAdBtn.disabled = true;
-        ui.rewardAdBtn.textContent = '✅ +50 XP 지급됨!';
-      }
-    },
-  });
-});
+ui.modalRestartBtn.addEventListener('click', restartWithCurrentOptions);
 ui.modeSelect.addEventListener('change', () => {
   activeCustomMatch = null;
   restartWithCurrentOptions();
@@ -1479,13 +1540,14 @@ ui.acceptChallengeBtn?.addEventListener('click', async () => {
     try {
       await fetch(`/api/battle/challenges/${chg.id}/respond`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${onlineClient.getActiveAccountAuth()?.accountToken || ''}` },
         body: JSON.stringify({ accept: true }),
-      });
+      }).then((response) => { if (!response.ok) throw new Error('도전장이 만료되었거나 인증이 필요합니다.'); });
       if (ui.onlineInviteInput) ui.onlineInviteInput.value = chg.inviteCode;
       ui.joinOnlineRoomBtn?.click();
-    } catch {
-      // fallback ignored
+    } catch (err) {
+      ui.onlineRoomStatusBox?.classList.remove('hidden');
+      if (ui.onlineRoomStatusText) ui.onlineRoomStatusText.textContent = err.message;
     }
     return;
   }
@@ -1511,7 +1573,7 @@ ui.declineChallengeBtn?.addEventListener('click', () => {
   if (chg?.id) {
     fetch(`/api/battle/challenges/${chg.id}/respond`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${onlineClient.getActiveAccountAuth()?.accountToken || ''}` },
       body: JSON.stringify({ accept: false }),
     }).catch(() => {});
   }
@@ -1520,9 +1582,12 @@ ui.declineChallengeBtn?.addEventListener('click', () => {
 let lastSeenServerChallengeId = '';
 async function pollServerChallenges() {
   const myId = loadUserProfile()?.userId || '';
-  if (!myId || ui.lobbyScreen?.classList.contains('hidden')) return;
+  const token = onlineClient.getActiveAccountAuth()?.accountToken;
+  if (!myId || !token || ui.lobbyScreen?.classList.contains('hidden')) return;
   try {
-    const res = await fetch(`/api/battle/challenges/pending?userId=${encodeURIComponent(myId)}`, { cache: 'no-store' });
+    const res = await fetch(`/api/battle/challenges/pending?userId=${encodeURIComponent(myId)}`, {
+      cache: 'no-store', headers: { Authorization: `Bearer ${token}` },
+    });
     if (!res.ok) return;
     const data = await res.json();
     const ch = data.challenge;
@@ -1568,7 +1633,7 @@ function enterLoginOrLobbyAfterAd() {
   ui.lobbyScreen.classList.remove('hidden');
 }
 
-initBannerAd(ui.googleAdContainer);
+
 
 // --- 실시간 온라인 방 대전 (/api/battle/*) 바인딩 & 재접속 ---
 let onlineMatchEntered = false;
@@ -1619,7 +1684,7 @@ function renderPartyRoomModal(res) {
       if (p) {
         const isMe = i === onlineClient.slot;
         const safeName = escapePartyHtml(p.name || `플레이어 ${i + 1}`);
-        const safeChar = encodeURIComponent(p.charKey || 'M01_MOCHI');
+        const safeChar = encodeURIComponent(CHARACTERS[p.charKey] ? p.charKey : 'M01_MOCHI');
         const badgeClass = i === 0 ? 'host' : 'ready';
         const badgeText = i === 0 ? '👑 방장' : '✅ 입장 완료';
         cards.push(
@@ -1695,6 +1760,26 @@ ui.leavePartyRoomBtn?.addEventListener('click', () => {
 
 function handleOnlineRoomState(res) {
   if (!res) return;
+  let connectionStatus = document.getElementById('onlineConnectionStatus');
+  if (!connectionStatus) {
+    connectionStatus = document.createElement('div');
+    connectionStatus.id = 'onlineConnectionStatus';
+    connectionStatus.setAttribute('role', 'status');
+    Object.assign(connectionStatus.style, {
+      position: 'fixed', top: 'max(8px, env(safe-area-inset-top))', left: '50%',
+      transform: 'translateX(-50%)', zIndex: '10000', background: '#222',
+      color: '#fff', padding: '8px 14px', borderRadius: '8px', display: 'none',
+    });
+    document.body.appendChild(connectionStatus);
+  }
+  if (res.connectionError) {
+    connectionStatus.textContent = res.disconnected
+      ? '대전방 연결이 종료됐습니다. 로비로 돌아가 주세요.'
+      : '연결이 끊겨 다시 연결하는 중입니다.';
+    connectionStatus.style.display = 'block';
+    return;
+  }
+  connectionStatus.style.display = 'none';
   if (res.status === 'WAITING_GUEST') {
     const joinedCount = res.players?.length || 1;
     const maxP = res.maxPlayers || 2;
@@ -1723,7 +1808,7 @@ function handleOnlineRoomState(res) {
     renderPartyRoomModal(res);
     return;
   }
-  if (res.status === 'ACTIVE' && res.snapshot) {
+  if ((res.status === 'ACTIVE' || res.status === 'FINISHED') && res.snapshot) {
     lastPartyModalSig = '';
     ui.partyRoomModal?.classList.add('hidden');
     engine.isRemoteMatch = true;
@@ -1870,12 +1955,12 @@ async function refreshLanOpenRooms() {
     if (sig === lastLanRoomsJson) return;
     lastLanRoomsJson = sig;
     const renderRoomRow = (r) => {
-      const classTag = r.schoolName && r.className ? ` · ${shortSchoolLabel(r.schoolName)} ${r.className}` : '';
-      const titleLabel = r.roomTitle || `${r.hostName}의 방`;
+      const classTag = r.schoolName && r.className ? ` · ${escapePartyHtml(shortSchoolLabel(r.schoolName))} ${escapePartyHtml(r.className)}` : '';
+      const titleLabel = escapePartyHtml(r.roomTitle || `${r.hostName}의 방`);
       const icon = r.scope === 'class' ? '🎓' : '🏠';
       return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;background:rgba(15,23,42,0.45);padding:6px 8px;border-radius:8px;">
-        <span style="font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${icon} <b>${titleLabel}</b> <span style="opacity:0.75;">(${r.hostName}${classTag} · ${r.playersCount}/${r.maxPlayers}명)</span></span>
-        <button type="button" class="social-mini-btn lan-join-btn" data-code="${r.inviteCode}" style="flex:0 0 auto;">입장</button>
+        <span style="font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${icon} <b>${titleLabel}</b> <span style="opacity:0.75;">(${escapePartyHtml(r.hostName)}${classTag} · ${escapePartyHtml(r.playersCount)}/${escapePartyHtml(r.maxPlayers)}명)</span></span>
+        <button type="button" class="social-mini-btn lan-join-btn" data-code="${escapePartyHtml(r.inviteCode)}" style="flex:0 0 auto;">입장</button>
       </div>`;
     };
     const bindJoinBtns = (container) => {
@@ -1926,6 +2011,8 @@ async function sendChallengeToPlayer(targetUserId, targetNickname) {
   onlineMatchEntered = false;
   const prof = getSafeProfile();
   try {
+    const accountToken = onlineClient.getActiveAccountAuth()?.accountToken;
+    if (!accountToken) throw new Error('도전장을 보내려면 계정 등록이 필요합니다.');
     const res = await onlineClient.createRoom({
       mapPreset: ui.mapSelect.value,
       charKey: ui.charSelect.value,
@@ -1935,9 +2022,9 @@ async function sendChallengeToPlayer(targetUserId, targetNickname) {
       className: prof.className || '',
       scope: 'all',
     });
-    await fetch('/api/battle/challenges', {
+    const challengeResponse = await fetch('/api/battle/challenges', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accountToken}` },
       body: JSON.stringify({
         targetUserId,
         inviteCode: res.inviteCode,
@@ -1948,10 +2035,12 @@ async function sendChallengeToPlayer(targetUserId, targetNickname) {
         fromClass: prof.className,
       }),
     });
+    if (!challengeResponse.ok) throw new Error('도전장을 전송하지 못했습니다. 잠시 후 다시 시도해 주세요.');
     ui.onlineRoomStatusBox?.classList.remove('hidden');
     ui.onlineRoomStatusText.textContent = `⚔️ ${targetNickname}(@${targetUserId})님에게 대결 요청 전송 완료! 수락 대기 중... [${res.inviteCode}]`;
     onlineClient.startPolling(handleOnlineRoomState, 65);
   } catch (err) {
+    onlineClient.clearSession();
     ui.onlineRoomStatusBox?.classList.remove('hidden');
     ui.onlineRoomStatusText.textContent = `대결 요청 오류: ${err.message}`;
   }
@@ -1974,19 +2063,37 @@ async function refreshLeaderboard(force = false) {
     const res = await fetch(`/api/battle/leaderboard?${qs.toString()}`, { cache: 'no-store' });
     if (!res.ok) return;
     const data = await res.json();
+    if (data.rankedRewardsEnabled === false) {
+      if (ui.schoolTopBanner) ui.schoolTopBanner.textContent = '공식 랭킹 집계가 일시 중단되었습니다.';
+      ui.leaderboardList.textContent = '공정한 대전을 준비하는 동안 순위와 경기 보상은 제공되지 않습니다.';
+      return;
+    }
     const list = data.leaderboard || [];
     const schoolTop = data.schoolTop || null;
-    const sig = JSON.stringify({ list, schoolTop, myId, currentLbScope });
+    const classTop = data.classTop || null;
+    const sig = JSON.stringify({ list, schoolTop, classTop, myId, currentLbScope });
     if (!force && sig === lastLeaderboardJson) return;
     lastLeaderboardJson = sig;
 
     if (ui.schoolTopBanner) {
       if (schoolTop) {
-        ui.schoolTopBanner.textContent = `👑 ${shortSchoolLabel(mySchool)} 1등: ${schoolTop.nickname} (@${schoolTop.userId}) · ${schoolTop.score ?? 0}점 (${schoolTop.matches}전 ${schoolTop.wins}승 · ${schoolTop.winRate}%)`;
+        const rkTxt = `${schoolTop.rankBadge || '🌱'} Lv.${schoolTop.rankLevel || 1}`;
+        ui.schoolTopBanner.textContent = `👑 우리 학교 1등 (${shortSchoolLabel(mySchool)}): ${rkTxt} ${schoolTop.nickname} (@${schoolTop.userId}) · ${schoolTop.score ?? 0}점 (${schoolTop.matches}전 ${schoolTop.wins}승 · ${schoolTop.winRate}%)`;
       } else if (mySchool) {
-        ui.schoolTopBanner.textContent = `👑 ${shortSchoolLabel(mySchool)} 첫 1등에 도전해보세요!`;
+        ui.schoolTopBanner.textContent = `👑 ${shortSchoolLabel(mySchool)} 우리 학교 첫 1등에 도전해보세요!`;
       } else {
         ui.schoolTopBanner.textContent = '👑 학교 정보를 등록하면 우리 학교 1등을 볼 수 있어요!';
+      }
+    }
+
+    if (ui.classTopBanner) {
+      if (classTop) {
+        const rkTxt = `${classTop.rankBadge || '🌱'} Lv.${classTop.rankLevel || 1}`;
+        ui.classTopBanner.textContent = `🎓 우리 반 1등 (${shortSchoolLabel(mySchool)} ${myClass}): ${rkTxt} ${classTop.nickname} (@${classTop.userId}) · ${classTop.score ?? 0}점 (${classTop.matches}전 ${classTop.wins}승 · ${classTop.winRate}%)`;
+      } else if (mySchool && myClass) {
+        ui.classTopBanner.textContent = `🎓 ${shortSchoolLabel(mySchool)} ${myClass} 우리 반 첫 1등에 도전해보세요!`;
+      } else {
+        ui.classTopBanner.textContent = '🎓 반 정보를 등록하면 우리 반 1등을 볼 수 있어요!';
       }
     }
 
@@ -1996,16 +2103,17 @@ async function refreshLeaderboard(force = false) {
     }
     ui.leaderboardList.innerHTML = list
       .map((item) => {
-        const medal = item.rank === 1 ? '🥇' : item.rank === 2 ? '🥈' : item.rank === 3 ? '🥉' : `${item.rank}위`;
+        const medal = item.rank === 1 ? '🥇' : item.rank === 2 ? '🥈' : item.rank === 3 ? '🥉' : `${escapePartyHtml(item.rank)}위`;
+        const rkBadge = `${escapePartyHtml(item.rankBadge || '🌱')}Lv.${escapePartyHtml(item.rankLevel || 1)}`;
         const isMe = myId && item.userId === myId;
         const bg = isMe ? 'rgba(250,204,21,0.18); border:1px solid rgba(250,204,21,0.45);' : 'rgba(15,23,42,0.45);';
         const challengeBtn = !isMe
-          ? `<button type="button" class="social-mini-btn lb-challenge-btn" data-uid="${item.userId}" data-nick="${item.nickname}" style="padding:3px 7px;font-size:11px;flex:0 0 auto;">⚔️ 대결</button>`
+          ? `<button type="button" class="social-mini-btn lb-challenge-btn" data-uid="${escapePartyHtml(item.userId)}" data-nick="${escapePartyHtml(item.nickname)}" style="padding:3px 7px;font-size:11px;flex:0 0 auto;">⚔️ 대결</button>`
           : '';
         return `<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;background:${bg}padding:5px 8px;border-radius:8px;font-size:12px;">
-          <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${medal} <b>${item.nickname}</b> <span style="opacity:0.7;">@${item.userId}</span></span>
+          <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${medal} <span style="opacity:0.9;">${rkBadge}</span> <b>${escapePartyHtml(item.nickname)}</b> <span style="opacity:0.7;">@${escapePartyHtml(item.userId)}</span></span>
           <div style="display:flex;align-items:center;gap:6px;flex:0 0 auto;">
-            <span style="white-space:nowrap;font-weight:700;color:#FDE047;">${item.score ?? 0}점 · ${item.matches}전 ${item.wins}승 (${item.winRate}%)</span>
+            <span style="white-space:nowrap;font-weight:700;color:#FDE047;">${escapePartyHtml(item.score ?? 0)}점 · ${escapePartyHtml(item.matches)}전 ${escapePartyHtml(item.wins)}승 (${escapePartyHtml(item.winRate)}%)</span>
             ${challengeBtn}
           </div>
         </div>`;
@@ -2040,24 +2148,8 @@ setInterval(() => refreshLeaderboard(false), 5000);
   }
 })();
 
-// 최초 구동 시 구글 전면 광고(3초 카운트다운) 시청 후 로그인/회원가입 화면으로 진입
-if (ui.interstitialAdOverlay && sessionStorage.getItem('puffpuff_intro_ad_shown') !== '1') {
-  ui.lobbyScreen.classList.add('hidden');
-  runAdCountdown({
-    overlayEl: ui.interstitialAdOverlay,
-    closeBtnEl: ui.closeInterstitialBtn,
-    seconds: 3,
-    waitLabel: (s) => `⏳ ${s}초 후 닫기`,
-    readyLabel: '✕ 광고 닫고 입장하기',
-    onComplete: () => {
-      sessionStorage.setItem('puffpuff_intro_ad_shown', '1');
-      enterLoginOrLobbyAfterAd();
-    },
-  });
-} else {
-  ui.interstitialAdOverlay?.classList.add('hidden');
-  enterLoginOrLobbyAfterAd();
-}
+// 실제 광고 SDK가 준비되기 전에는 광고 없이 바로 로비로 진입합니다.
+enterLoginOrLobbyAfterAd();
 const incomingInvite = parseInviteFromUrl();
 if (incomingInvite) {
   addFriendById(incomingInvite.hostId, {

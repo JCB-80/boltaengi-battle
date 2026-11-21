@@ -4,6 +4,7 @@ import { CoasterCart, CapsuleProjectile } from './entities.js';
 
 const SESSION_KEY = 'boltaengi_online_session_v1';
 const ACCOUNT_KEY = 'boltaengi_account_auth_v1';
+const ACCOUNT_KEY_PREFIX = 'boltaengi_account_auth_v2:';
 
 export class OnlineBattleClient {
   constructor() {
@@ -16,6 +17,9 @@ export class OnlineBattleClient {
     this.initializedMapKey = null;
     this.lastPhase = null;
     this.accountAuth = this._loadAccountAuth();
+    this._accountSyncGeneration = 0;
+    this._activeProfileUserId = null;
+    this._accountEpochs = new Map();
   }
 
   _loadAccountAuth() {
@@ -27,38 +31,73 @@ export class OnlineBattleClient {
     }
   }
 
-  _saveAccountAuth(auth) {
-    this.accountAuth = auth;
+  _savedAccountFor(userId) {
     try {
-      if (auth) localStorage.setItem(ACCOUNT_KEY, JSON.stringify(auth));
+      const saved = localStorage.getItem(ACCOUNT_KEY_PREFIX + encodeURIComponent(userId));
+      if (saved) return JSON.parse(saved);
     } catch {
-      // ignore storage errors
+      // Fall back to the existing single-account record.
+    }
+    const legacy = this._loadAccountAuth();
+    return legacy?.userId === userId ? legacy : null;
+  }
+
+  _saveAccountAuth(auth, activate = true) {
+    // Preserve the old single-account record before switching identities. Each
+    // account has its own entry; a slow response must not erase another token.
+    const previous = this._loadAccountAuth();
+    if (previous?.userId && previous.accountToken) {
+      localStorage.setItem(ACCOUNT_KEY_PREFIX + encodeURIComponent(previous.userId), JSON.stringify(previous));
+    }
+    localStorage.setItem(ACCOUNT_KEY_PREFIX + encodeURIComponent(auth.userId), JSON.stringify(auth));
+    if (activate) {
+      localStorage.setItem(ACCOUNT_KEY, JSON.stringify(auth));
+      this.accountAuth = auth;
     }
   }
 
   async syncAccount(profile) {
     if (!profile?.userId) return null;
-    const res = await this._post('/api/battle/accounts', {
-      userId: profile.userId,
-      nickname: profile.nickname,
-      schoolName: profile.schoolName,
-      className: profile.className,
-    }, false);
-    if (res?.account && res?.accountToken) {
+    const generation = ++this._accountSyncGeneration;
+    this._activeProfileUserId = profile.userId;
+    const epoch = this._accountEpochs.get(profile.userId) || 0;
+    const headers = { 'Content-Type': 'application/json' };
+    const savedAuth = this._savedAccountFor(profile.userId);
+    if (savedAuth?.accountToken) {
+      headers.Authorization = `Bearer ${savedAuth.accountToken}`;
+    }
+    const response = await fetch('/api/battle/accounts', {
+      method: 'POST', headers,
+      body: JSON.stringify({
+        userId: profile.userId,
+        nickname: profile.nickname,
+        schoolName: profile.schoolName,
+        className: profile.className,
+      }),
+    });
+    const res = await response.json();
+    const isCurrent = generation === this._accountSyncGeneration;
+    // Keep credentials from successful delayed registration, but never make
+    // an outdated profile active or restore credentials after its deletion.
+    if (response.ok && res?.account && res?.accountToken &&
+        res.account.userId === profile.userId && (this._accountEpochs.get(profile.userId) || 0) === epoch) {
       this._saveAccountAuth({
         userId: res.account.userId,
         accountId: res.account.accountId,
         accountToken: res.accountToken,
-      });
+      }, isCurrent);
     }
+    if (!isCurrent) return null;
+    if (!response.ok) throw new Error(res.error || `HTTP ${response.status}`);
     return res?.account || null;
   }
 
   async fetchMyAccount() {
-    if (!this.accountAuth?.accountToken) return null;
+    const auth = this.getActiveAccountAuth();
+    if (!auth?.accountToken) return null;
     const res = await fetch('/api/battle/accounts/me', {
       method: 'GET',
-      headers: { Authorization: `Bearer ${this.accountAuth.accountToken}` },
+      headers: { Authorization: `Bearer ${auth.accountToken}` },
       cache: 'no-store',
     });
     const data = await res.json();
@@ -67,24 +106,34 @@ export class OnlineBattleClient {
   }
 
   async recordLocalMatchReward({ win = false, deltaXp = 40, matchId = '' } = {}) {
-    if (!this.accountAuth?.accountToken) return null;
-    const res = await fetch('/api/battle/accounts/reward', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.accountAuth.accountToken}`,
-      },
-      body: JSON.stringify({
-        accountId: this.accountAuth.accountId,
-        idempotencyKey: matchId || `local:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
-        deltaXp,
-        win: Boolean(win),
-        matchCompleted: true,
-      }),
+    // Local results are kept locally; only server-ended online matches enter the leaderboard.
+    return null;
+  }
+
+  async deleteAccount() {
+    const auth = this.getActiveAccountAuth();
+    if (!auth?.accountToken) throw new Error('UNAUTHORIZED');
+    this._accountSyncGeneration++;
+    this._accountEpochs.set(auth.userId, (this._accountEpochs.get(auth.userId) || 0) + 1);
+    const response = await fetch('/api/battle/accounts/me', {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${auth.accountToken}` },
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-    return data.account || null;
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    this.accountAuth = null;
+    try {
+      localStorage.removeItem(ACCOUNT_KEY_PREFIX + encodeURIComponent(auth.userId));
+      if (this._loadAccountAuth()?.userId === auth.userId) localStorage.removeItem(ACCOUNT_KEY);
+      return data;
+    } catch {
+      return { ...data, localCleanupFailed: true };
+    }
+  }
+
+  getActiveAccountAuth() {
+    return this._activeProfileUserId && this.accountAuth?.userId === this._activeProfileUserId
+      ? this.accountAuth : null;
   }
 
   saveSession() {
@@ -112,7 +161,9 @@ export class OnlineBattleClient {
     }
   }
 
-  clearSession() {
+  clearSession({ notifyServer = true } = {}) {
+    const roomId = this.roomId;
+    const token = this.token;
     this.stopPolling();
     this.roomId = null;
     this.token = null;
@@ -121,6 +172,15 @@ export class OnlineBattleClient {
     this.appliedCraterIds.clear();
     this.initializedMapKey = null;
     sessionStorage.removeItem(SESSION_KEY);
+    if (notifyServer && roomId && token) {
+      // Capture credentials before clearing local state; keepalive also covers
+      // navigation away. A failed request is handled by server-side timeout.
+      fetch(`/api/battle/rooms/${encodeURIComponent(roomId)}/leave`, {
+        method: 'POST', keepalive: true,
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: '{}',
+      }).catch(() => {});
+    }
   }
 
   async _post(url, body = {}, useAuth = false) {
@@ -135,10 +195,16 @@ export class OnlineBattleClient {
   async _get(url) {
     const headers = {};
     if (this.token) headers.Authorization = `Bearer ${this.token}`;
-    const res = await fetch(url, { method: 'GET', headers, cache: 'no-store' });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-    return data;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    try {
+      const res = await fetch(url, { method: 'GET', headers, cache: 'no-store', signal: controller.signal });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      return data;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   async createRoom({ mapPreset, charKey, name, roomTitle = '', maxPlayers = 2, schoolName = '', className = '', scope = 'all' }) {
@@ -152,7 +218,7 @@ export class OnlineBattleClient {
       schoolName,
       className,
       scope,
-      accountToken: this.accountAuth?.accountToken || undefined,
+      accountToken: this.getActiveAccountAuth()?.accountToken || undefined,
     }, false);
     this.roomId = res.roomId;
     this.token = res.memberToken;
@@ -168,7 +234,7 @@ export class OnlineBattleClient {
       inviteCode,
       charKey,
       name,
-      accountToken: this.accountAuth?.accountToken || undefined,
+      accountToken: this.getActiveAccountAuth()?.accountToken || undefined,
     }, false);
     this.roomId = res.roomId;
     this.token = res.memberToken;
@@ -202,17 +268,30 @@ export class OnlineBattleClient {
   startPolling(onState, intervalMs = 65) {
     this.stopPolling();
     this._fetching = false;
+    let failures = 0;
+    let retryAt = 0;
     const tick = async () => {
-      if (this._fetching) return;
+      if (this._fetching || Date.now() < retryAt) return;
       const reqRoomId = this.roomId;
+      const reqToken = this.token;
       if (!reqRoomId || !this.token) return;
       this._fetching = true;
       try {
         const state = await this.fetchState();
-        if (state && this.roomId === reqRoomId && this.token) onState(state);
+        if (state && this.roomId === reqRoomId && this.token === reqToken) {
+          failures = 0;
+          retryAt = 0;
+          onState(state);
+        }
       } catch (err) {
+        if (this.roomId !== reqRoomId || this.token !== reqToken) return;
         if (err?.message === 'ROOM_NOT_FOUND' || err?.message === 'UNAUTHORIZED') {
-          this.clearSession();
+          this.clearSession({ notifyServer: false });
+          onState({ connectionError: err.message, disconnected: true });
+        } else {
+          failures++;
+          retryAt = Date.now() + Math.min(5000, 500 * 2 ** Math.min(failures - 1, 4));
+          if (failures === 1) onState({ connectionError: 'RECONNECTING' });
         }
       } finally {
         this._fetching = false;

@@ -10,6 +10,8 @@ export class ToyAudio {
     this.bgmGain = null;
     this.bgmStep = 0;
     this.nextNoteTime = 0;
+    this.bgmAudio = null;
+    this.bgmTrackKey = '';
   }
 
   ensureContext() {
@@ -305,6 +307,50 @@ export class ToyAudio {
       clearInterval(this.bgmTimer);
       this.bgmTimer = null;
     }
+
+    // 0) 실제 CC0 MP3 배경음 우선 재생 (assets/bgm/lobby.mp3 및 8종 맵별 .mp3)
+    const validMaps = new Set([
+      'bridge', 'twin_peaks', 'archipelago', 'citadel',
+      'matcha_cliff', 'honey_waffle', 'blueberry_tart', 'melon_soda',
+    ]);
+    const trackKey = mode === 'battle'
+      ? (validMaps.has(this.currentMapKey) ? this.currentMapKey : 'bridge')
+      : 'lobby';
+    const mp3Url = `./assets/bgm/${trackKey}.mp3`;
+    const targetVol = mode === 'battle' ? 0.34 : 0.42;
+
+    if (typeof Audio !== 'undefined') {
+      try {
+        if (this.bgmAudio && this.bgmTrackKey === trackKey && !this.bgmAudio.paused) {
+          this.bgmAudio.volume = targetVol;
+          return;
+        }
+        if (this.bgmAudio) {
+          this.bgmAudio.pause();
+          this.bgmAudio.currentTime = 0;
+        }
+        const el = new Audio(mp3Url);
+        el.loop = true;
+        el.volume = targetVol;
+        this.bgmAudio = el;
+        this.bgmTrackKey = trackKey;
+        const p = el.play();
+        if (p && typeof p.then === 'function') {
+          p.then(() => {
+            if (this.bgmTimer) {
+              clearInterval(this.bgmTimer);
+              this.bgmTimer = null;
+            }
+          }).catch(() => {
+            // 자동재생 차단 또는 파일 미존재 시 신스 폴백 유지
+          });
+        }
+        return;
+      } catch {
+        // fallback to WebAudio synth below
+      }
+    }
+
     const ctx = this.ensureContext();
     if (!ctx) return;
 
@@ -603,6 +649,21 @@ export class ToyAudio {
       return activeMapTrack || battleTracks[this.battleTrackIdx];
     };
 
+    // 1) 맵별 스타일 프로파일 (장르·악기 음색·필터·드럼 리듬 차별화!)
+    const styleByMap = {
+      bridge: { filterHz: 2400, leadWave: 'triangle', subWave: 'sine', drum: 'pop' },
+      twin_peaks: { filterHz: 3200, leadWave: 'sine', subWave: 'triangle', drum: 'waltz' },
+      archipelago: { filterHz: 2800, leadWave: 'triangle', subWave: 'square', drum: 'carnival' },
+      citadel: { filterHz: 1500, leadWave: 'sawtooth', subWave: 'square', drum: 'rock' },
+      matcha_cliff: { filterHz: 2100, leadWave: 'sine', subWave: 'triangle', drum: 'zen' },
+      honey_waffle: { filterHz: 2200, leadWave: 'triangle', subWave: 'sine', drum: 'swing' },
+      blueberry_tart: { filterHz: 1850, leadWave: 'sine', subWave: 'sine', drum: 'dream' },
+      melon_soda: { filterHz: 3400, leadWave: 'square', subWave: 'triangle', drum: 'funk' },
+    };
+    const activeStyle = mode === 'battle'
+      ? (styleByMap[this.currentMapKey] || styleByMap.bridge)
+      : { filterHz: 2600, leadWave: 'triangle', subWave: 'sine', drum: 'pop' };
+
     const scheduleStep = (stepIdx, t) => {
       if (!this.bgmGain || this.muted || !this.bgmEnabled) return;
       const tr = getTrack();
@@ -611,47 +672,51 @@ export class ToyAudio {
       const bFreq = tr.bass[stepIdx % tr.bass.length];
       const hFreq = tr.harm.length ? tr.harm[stepIdx % tr.harm.length] : 0;
 
-      // 1) 듀얼 디튠 리드 신스 (더 풍성하고 선명한 멜로디)
+      // 1) 부드러운 로패스 필터를 거친 맵별 리드 악기 (거친 8비트 비프음 제거)
       if (mFreq > 0) {
         const osc1 = ctx.createOscillator();
         const osc2 = ctx.createOscillator();
+        const filt = ctx.createBiquadFilter();
         const g = ctx.createGain();
-        const waveType = mode === 'battle' ? (tr.wave || 'square') : 'triangle';
-        osc1.type = waveType;
-        osc2.type = 'triangle';
+        osc1.type = activeStyle.leadWave;
+        osc2.type = activeStyle.subWave;
         osc1.frequency.setValueAtTime(mFreq, t);
-        osc2.frequency.setValueAtTime(mFreq * 1.004, t);
+        osc2.frequency.setValueAtTime(mFreq * (activeStyle.drum === 'rock' ? 0.5 : 1.003), t);
+        filt.type = 'lowpass';
+        filt.frequency.setValueAtTime(activeStyle.filterHz, t);
+        filt.frequency.exponentialRampToValueAtTime(Math.max(500, activeStyle.filterHz * 0.45), t + stepDuration * 0.85);
         g.gain.setValueAtTime(0.001, t);
-        g.gain.linearRampToValueAtTime(mode === 'battle' ? 0.068 : 0.105, t + 0.01);
-        g.gain.exponentialRampToValueAtTime(0.001, t + stepDuration * 0.88);
-        osc1.connect(g);
-        osc2.connect(g);
+        g.gain.linearRampToValueAtTime(mode === 'battle' ? 0.062 : 0.095, t + 0.012);
+        g.gain.exponentialRampToValueAtTime(0.001, t + stepDuration * 0.9);
+        osc1.connect(filt);
+        osc2.connect(filt);
+        filt.connect(g);
         g.connect(this.bgmGain);
         osc1.start(t);
         osc2.start(t);
-        osc1.stop(t + stepDuration * 0.92);
-        osc2.stop(t + stepDuration * 0.92);
+        osc1.stop(t + stepDuration * 0.94);
+        osc2.stop(t + stepDuration * 0.94);
       }
 
-      // 1.5) 반짝이는 화음 아르페지오 레이어
+      // 1.5) 화음 아르페지오 / 벨 레이어
       if (hFreq > 0) {
         const aOsc = ctx.createOscillator();
         const aGain = ctx.createGain();
-        aOsc.type = 'triangle';
+        aOsc.type = activeStyle.drum === 'zen' || activeStyle.drum === 'dream' ? 'sine' : 'triangle';
         aOsc.frequency.setValueAtTime(hFreq, t);
-        aGain.gain.setValueAtTime(0.045, t);
-        aGain.gain.exponentialRampToValueAtTime(0.001, t + stepDuration * 0.75);
+        aGain.gain.setValueAtTime(0.038, t);
+        aGain.gain.exponentialRampToValueAtTime(0.001, t + stepDuration * 0.8);
         aOsc.connect(aGain);
         aGain.connect(this.bgmGain);
         aOsc.start(t);
-        aOsc.stop(t + stepDuration * 0.8);
+        aOsc.stop(t + stepDuration * 0.85);
       }
 
-      // 2) 바운스 베이스
+      // 2) 바운스 베이스 (록/펑크는 살짝 펀치감, 드림/젠은 부드럽게)
       if (bFreq > 0) {
         const bOsc = ctx.createOscillator();
         const bGain = ctx.createGain();
-        bOsc.type = 'sine';
+        bOsc.type = activeStyle.drum === 'rock' || activeStyle.drum === 'funk' ? 'triangle' : 'sine';
         bOsc.frequency.setValueAtTime(bFreq, t);
         bGain.gain.setValueAtTime(0.095, t);
         bGain.gain.exponentialRampToValueAtTime(0.001, t + stepDuration * 0.85);
@@ -661,30 +726,60 @@ export class ToyAudio {
         bOsc.stop(t + stepDuration * 0.9);
       }
 
-      // 3) 4분음표 킥 + 엇박 하이햇
-      if (stepIdx % 2 === 0) {
+      // 3) 맵별 고유 드럼 패턴 (왈츠 3박 / 록 스네어 / 젠 목탁 / 펑크 스윙 / 팝)
+      const drumType = activeStyle.drum;
+      const playKick =
+        drumType === 'waltz' ? stepIdx % 6 === 0 :
+        drumType === 'rock' ? (stepIdx % 4 === 0 || stepIdx % 8 === 5) :
+        drumType === 'zen' ? stepIdx % 8 === 0 :
+        stepIdx % 4 === 0;
+      const playSnare =
+        drumType === 'rock' ? stepIdx % 4 === 2 :
+        drumType === 'funk' ? (stepIdx % 4 === 2 || stepIdx % 8 === 7) :
+        drumType === 'pop' || drumType === 'carnival' ? stepIdx % 4 === 2 :
+        false;
+      const playHat =
+        drumType === 'waltz' ? (stepIdx % 6 === 2 || stepIdx % 6 === 4) :
+        drumType === 'zen' ? stepIdx % 4 === 2 :
+        stepIdx % 2 === 1;
+
+      if (playKick) {
         const kOsc = ctx.createOscillator();
         const kGain = ctx.createGain();
         kOsc.type = 'sine';
-        kOsc.frequency.setValueAtTime(125, t);
-        kOsc.frequency.exponentialRampToValueAtTime(42, t + 0.08);
-        kGain.gain.setValueAtTime(0.11, t);
-        kGain.gain.exponentialRampToValueAtTime(0.001, t + 0.09);
+        kOsc.frequency.setValueAtTime(drumType === 'rock' ? 145 : 120, t);
+        kOsc.frequency.exponentialRampToValueAtTime(40, t + 0.09);
+        kGain.gain.setValueAtTime(drumType === 'zen' ? 0.07 : 0.115, t);
+        kGain.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
         kOsc.connect(kGain);
         kGain.connect(this.bgmGain);
         kOsc.start(t);
-        kOsc.stop(t + 0.1);
-      } else {
+        kOsc.stop(t + 0.11);
+      }
+      if (playSnare) {
+        const sOsc = ctx.createOscillator();
+        const sGain = ctx.createGain();
+        sOsc.type = 'triangle';
+        sOsc.frequency.setValueAtTime(220, t);
+        sOsc.frequency.exponentialRampToValueAtTime(95, t + 0.06);
+        sGain.gain.setValueAtTime(0.06, t);
+        sGain.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
+        sOsc.connect(sGain);
+        sGain.connect(this.bgmGain);
+        sOsc.start(t);
+        sOsc.stop(t + 0.08);
+      }
+      if (playHat) {
         const hOsc = ctx.createOscillator();
         const hGain = ctx.createGain();
-        hOsc.type = 'square';
-        hOsc.frequency.setValueAtTime(4200, t);
-        hGain.gain.setValueAtTime(0.014, t);
-        hGain.gain.exponentialRampToValueAtTime(0.001, t + 0.03);
+        hOsc.type = drumType === 'zen' ? 'sine' : 'triangle';
+        hOsc.frequency.setValueAtTime(drumType === 'zen' ? 880 : 3800, t);
+        hGain.gain.setValueAtTime(drumType === 'zen' ? 0.032 : 0.014, t);
+        hGain.gain.exponentialRampToValueAtTime(0.001, t + 0.035);
         hOsc.connect(hGain);
         hGain.connect(this.bgmGain);
         hOsc.start(t);
-        hOsc.stop(t + 0.035);
+        hOsc.stop(t + 0.04);
       }
     };
 
@@ -706,6 +801,13 @@ export class ToyAudio {
   }
 
   stopBgm() {
+    if (this.bgmAudio) {
+      try {
+        this.bgmAudio.pause();
+      } catch {
+        // ignore
+      }
+    }
     if (this.bgmTimer) {
       clearInterval(this.bgmTimer);
       this.bgmTimer = null;

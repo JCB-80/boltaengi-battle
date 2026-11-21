@@ -3,6 +3,25 @@ import { SHELLS, WORLD } from './config.js';
 import { BIOMES } from './terrain.js';
 
 const CHAR_SPRITES = new Map();
+const CHAR_AIM_SPRITES = new Map();
+
+// 볼살 위치는 원본 이미지의 정규화 좌표다. 스프라이트마다 얼굴 높이와 폭이 다르다.
+const CHEEK_ANCHORS = {
+  M01_MOCHI: [0.30, 0.50], M02_PUDDING: [0.29, 0.52], M03_CLOUD: [0.29, 0.46],
+  M04_BAMTOL: [0.21, 0.45], M05_SODAPIN: [0.27, 0.46], M06_COCONYANG: [0.43, 0.45],
+  M07_BYEOLJJI: [0.43, 0.46], M08_MELON: [0.28, 0.48], M09_TOTORING: [0.30, 0.52],
+  M10_GAMJA: [0.26, 0.42], F11_BERRY: [0.36, 0.54], F12_LEMON: [0.29, 0.47],
+  F13_PEACH: [0.32, 0.48], F14_LAVENDU: [0.29, 0.48], F15_CHERRY: [0.32, 0.49],
+  F16_CHOUX: [0.30, 0.47], F17_MACARON: [0.28, 0.43], F18_STAR: [0.30, 0.47],
+  F19_COTTON: [0.30, 0.47], F20_MILKTEA: [0.25, 0.43],
+};
+
+function marbleColors(shellKey, isUltimate) {
+  if (isUltimate) return ['#FEF08A', '#F97316', '#EC4899'];
+  if (shellKey === 'AQUA_DRILL') return ['#E0F2FE', '#38BDF8', '#0369A1'];
+  if (shellKey === 'CHEESE_BOUNCE') return ['#FEF9C3', '#FACC15', '#CA8A04'];
+  return ['#FEF3C7', '#FB923C', '#9A3412'];
+}
 
 function getCharSprite(charId, onLoad = null) {
   if (!charId) return { img: null, loaded: false, callbacks: [] };
@@ -20,6 +39,24 @@ function getCharSprite(charId, onLoad = null) {
   }
   if (!entry.loaded && typeof onLoad === 'function') {
     entry.callbacks.push(onLoad);
+  }
+  return entry;
+}
+
+function getCharAimSprite(charId) {
+  if (!charId) return { img: null, loaded: false };
+  let entry = CHAR_AIM_SPRITES.get(charId);
+  if (!entry) {
+    const img = new Image();
+    entry = { img, loaded: false };
+    img.onload = () => {
+      entry.loaded = true;
+    };
+    img.onerror = () => {
+      entry.loaded = false;
+    };
+    img.src = `./assets/chars_aim/${charId}.png?v=1`;
+    CHAR_AIM_SPRITES.set(charId, entry);
   }
   return entry;
 }
@@ -61,9 +98,19 @@ function drawWarpedSprite3D(ctx, img, ox, oy, destSize, anchorX, anchorY, dx, dy
     if (Math.abs(denom) < 1e-4) return;
     ctx.save();
     ctx.beginPath();
-    ctx.moveTo(p0.x, p0.y);
-    ctx.lineTo(p1.x, p1.y);
-    ctx.lineTo(p2.x, p2.y);
+    // 인접 삼각형의 안티앨리어싱 틈이 점무늬로 보이지 않도록 클립만 미세하게 겹친다.
+    const cx = (p0.x + p1.x + p2.x) / 3;
+    const cy = (p0.y + p1.y + p2.y) / 3;
+    const clipPoint = (p) => {
+      const dx = p.x - cx;
+      const dy = p.y - cy;
+      const length = Math.hypot(dx, dy) || 1;
+      return { x: p.x + dx / length * 0.2, y: p.y + dy / length * 0.2 };
+    };
+    const c0 = clipPoint(p0), c1 = clipPoint(p1), c2 = clipPoint(p2);
+    ctx.moveTo(c0.x, c0.y);
+    ctx.lineTo(c1.x, c1.y);
+    ctx.lineTo(c2.x, c2.y);
     ctx.closePath();
     ctx.clip();
 
@@ -79,6 +126,12 @@ function drawWarpedSprite3D(ctx, img, ox, oy, destSize, anchorX, anchorY, dx, dy
     ctx.restore();
   };
 
+  // 메쉬 각 조각에 같은 그림자를 반복하면 얼굴과 털에 거친 점이 생긴다.
+  ctx.save();
+  ctx.shadowColor = 'rgba(0, 0, 0, 0)';
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetX = 0;
+  ctx.shadowOffsetY = 0;
   for (let gy = 0; gy < N; gy++) {
     for (let gx = 0; gx < N; gx++) {
       const p00 = pts[gy][gx];
@@ -89,6 +142,7 @@ function drawWarpedSprite3D(ctx, img, ox, oy, destSize, anchorX, anchorY, dx, dy
       drawTri(p00, p11, p01);
     }
   }
+  ctx.restore();
 }
 
 export class GameRenderer {
@@ -124,6 +178,11 @@ export class GameRenderer {
     this.camX = 0;
     this.camY = 0;
     this.camZoom = 1;
+    this.recoilProgress = new WeakMap();
+    this.aimCheekAnchors = new Map();
+    this.previousPhase = null;
+    this.flightRenderFrames = 0;
+    this.launchCheekAnchor = null;
   }
 
   addShake(amount) {
@@ -139,6 +198,18 @@ export class GameRenderer {
     const ctx = this.ctx;
     const cw = this.canvas.width;
     const ch = this.canvas.height;
+
+    if (state.phase === 'FLIGHT') {
+      if (this.previousPhase !== 'FLIGHT') {
+        this.flightRenderFrames = 0;
+        this.launchCheekAnchor = this.aimCheekAnchors.get(state.activeActor?.id) || null;
+      } else {
+        this.flightRenderFrames++;
+      }
+    } else {
+      this.launchCheekAnchor = null;
+    }
+    this.previousPhase = state.phase;
 
     ctx.save();
     ctx.clearRect(0, 0, cw, ch);
@@ -209,7 +280,7 @@ export class GameRenderer {
     for (const cart of state.carts) {
       if (!cart.alive) continue;
       const isCurrent = state.activeActor && state.activeActor.id === cart.id;
-      this.drawCoasterCart(ctx, cart, isCurrent, state.phase, state.frameCount);
+      this.drawCoasterCart(ctx, cart, isCurrent, state.phase, state.frameCount, state.dragState);
     }
 
     // 4) 플로팅 아크 조준 링 & 28% 가이드 점선 (플레이어 조준 페이즈)
@@ -225,7 +296,14 @@ export class GameRenderer {
     // 5) 비행 중인 캡슐탄 레이어
     for (const proj of state.projectiles) {
       if (proj.active) {
-        this.drawProjectile(ctx, proj, state.frameCount);
+        // 앞의 물리 좌표는 유지하고, 발사 직후 몇 프레임만 볼살에서 나오는 시각 보간을 적용한다.
+        const blend = !proj.isSubShell && this.launchCheekAnchor
+          ? Math.max(0, 1 - this.flightRenderFrames / 4) : 0;
+        const visualPosition = blend ? {
+          x: proj.x + (this.launchCheekAnchor.x - proj.x) * blend,
+          y: proj.y + (this.launchCheekAnchor.y - proj.y) * blend,
+        } : null;
+        this.drawProjectile(ctx, proj, state.frameCount, visualPosition);
       }
     }
 
@@ -676,7 +754,7 @@ export class GameRenderer {
     }
   }
 
-  drawCoasterCart(ctx, cart, isCurrent, phase, frameCount) {
+  drawCoasterCart(ctx, cart, isCurrent, phase, frameCount, dragState = null) {
     ctx.save();
     // 발사 반동(Recoil)에 따른 뒤로 밀림 효과
     const recoilShift = -cart.facing * cart.recoil * 9;
@@ -737,9 +815,10 @@ export class GameRenderer {
     ctx.save();
     ctx.rotate(cart.tiltAngle);
 
-    // 좌/우 방향 반전 + 모바일/PC 모두 또렷한 3D 벨벳 말랑볼 요정단 스케일 (1.74x)
+    // 좌/우 방향 반전. 발사·피격 판정과의 기존 스케일을 유지한다.
     ctx.save();
-    ctx.scale(cart.facing * 1.74, 1.74);
+    const spriteScale = 1.74;
+    ctx.scale(cart.facing * spriteScale, spriteScale);
 
     const idleBob = Math.sin(frameCount * 0.09 + cart.slotIndex * 1.7) * 1.2;
     const stepL = Math.max(0, Math.sin(cart.wheelSpin * 2.8)) * 4.5;
@@ -748,21 +827,35 @@ export class GameRenderer {
     const walkHop = Math.abs(Math.sin(cart.wheelSpin * 2.8)) * 3.2;
     const headY = -27 + idleBob;
 
-    const pullNorm = isCurrent && phase === 'AIM' ? Math.max(0, (cart.aimPower - 15) / 85) : 0;
-    const isHardPull = isCurrent && phase === 'AIM' && cart.aimPower >= 65;
-    const hardRatio = isHardPull ? (cart.aimPower - 65) / 35 : 0;
+    const muzzle = cart.getMuzzlePosition?.();
+    const dragging = Boolean(isCurrent && phase === 'AIM' && dragState?.active && muzzle);
+    const dragDistance = dragging ? Math.hypot(dragState.currentX - muzzle.baseX, dragState.currentY - muzzle.baseY) : 0;
+    const pullNorm = Math.max(0, Math.min(1, (dragDistance - 4) / 103));
+    const isHardPull = pullNorm >= 0.65;
+    const hardRatio = isHardPull ? (pullNorm - 0.65) / 0.35 : 0;
     const strainShakeX = isHardPull ? Math.sin(frameCount * 1.55) * (0.7 + hardRatio * 1.4) : 0;
-    // 3단계 볼살 탄성 발사 물리 (t: 0=발사직후 스냅 -> 0.22=최대 전방 튕김 -> 0.22~1.0=푸딩 감쇠 출렁임)
-    const launchT = cart.recoil > 0 ? 1 - cart.recoil : 0;
+    // 발사 반동의 시작값은 일반탄과 궁극기가 다르므로 실제 시작값에 맞춰 정규화한다.
+    let launchT = 0;
+    if (cart.recoil > 0.01) {
+      let recoil = this.recoilProgress.get(cart);
+      if (!recoil || cart.recoil > recoil.previous + 0.001) recoil = { peak: cart.recoil };
+      recoil.previous = cart.recoil;
+      this.recoilProgress.set(cart, recoil);
+      launchT = Math.max(0, Math.min(1, 1 - cart.recoil / recoil.peak));
+    } else {
+      this.recoilProgress.delete(cart);
+    }
     let recoilSpring = 0;
     let bodySquashX = 1 - pullNorm * 0.09;
     let bodySquashY = 1 + pullNorm * 0.07;
     if (cart.recoil > 0.01) {
       if (launchT < 0.22) {
         const snapP = Math.sin((launchT / 0.22) * Math.PI * 0.5);
-        recoilSpring = snapP * 1.15;
-        bodySquashX = 1 + snapP * 0.22;
-        bodySquashY = 1 - snapP * 0.16;
+        // 버튼·AI 발사에서도 첫 프레임에 살짝 당겼다가 앞으로 튕긴다.
+        // 물리 발사 시점은 그대로 두고, 시각적인 반동만 보간한다.
+        recoilSpring = -0.45 * (1 - snapP) + snapP * 1.15;
+        bodySquashX = 1 + recoilSpring * 0.14;
+        bodySquashY = 1 - recoilSpring * 0.11;
       } else {
         const dt = launchT - 0.22;
         const damp = Math.exp(-dt * 4.8);
@@ -776,9 +869,19 @@ export class GameRenderer {
     ctx.translate(strainShakeX + recoilSpring * 4.5, 0);
     ctx.rotate(walkTilt + pullLean);
 
-    const sprite3d = getCharSprite(cart.spec?.id || cart.charKey);
+    const spriteId = cart.spec?.id || cart.charKey;
+    const sprite3d = getCharSprite(spriteId);
+    const aimSprite3d = isCurrent && phase === 'AIM' && cart.recoil <= 0.01 ? getCharAimSprite(spriteId) : { loaded: false };
+    const useAimPoseSprite = Boolean(aimSprite3d.loaded && aimSprite3d.img);
+    const winHop = phase === 'GAME_OVER' && cart.alive ? Math.abs(Math.sin(frameCount * 0.22)) * 9 : 0;
+    const hurtWobble = cart.mood === 'hurt' ? Math.sin(frameCount * 1.8) * 2.2 : 0;
+    const spriteX = -29 + hurtWobble;
+    const spriteY = -56 + idleBob * 0.5 - walkHop - winHop;
+    const [cheekU, cheekV] = CHEEK_ANCHORS[spriteId] || [0.30, 0.50];
+    const cheekBaseX = sprite3d.loaded ? spriteX + 58 * cheekU : -12;
+    const cheekBaseY = sprite3d.loaded ? spriteY + 58 * cheekV : headY + 2;
     if (sprite3d.loaded) {
-      // 실제 3D 벨벳·젤리볼 피규어 스프라이트 렌더링 (배경 분리 드롭섀도우 + 볼살 2D 탄성 메쉬 워핑)
+      // 실제 3D 벨벳·젤리볼 피규어 스프라이트 렌더링 (조준 시 3D 볼살 늘림 전용 포즈 이미지 사용!)
       ctx.save();
       ctx.shadowColor = 'rgba(15, 23, 42, 0.58)';
       ctx.shadowBlur = 9;
@@ -790,32 +893,35 @@ export class GameRenderer {
       let inGameCheekDy = 0;
       if (isCurrent && (phase === 'AIM' || cart.recoil > 0.01)) {
         const aimRad = (cart.aimElevation * Math.PI) / 180;
-        const charge = Math.max(0.15, cart.aimPower / 100);
         if (cart.recoil > 0.01) {
-          // 발사 순간 볼살이 앞으로 팡!! 튕겼다가 푸딩처럼 출렁이며 복귀
-          inGameCheekDx = recoilSpring * 24 * Math.cos(aimRad * 0.5);
-          inGameCheekDy = -recoilSpring * 10 * Math.sin(aimRad * 0.5);
+          // 10~15번 모션: 발사 직후 볼살이 앞으로 팡! 튕겼다가 푸딩처럼 출렁이며 15번 기본 자세로 복귀
+          inGameCheekDx = recoilSpring * 13 * Math.cos(aimRad);
+          inGameCheekDy = -recoilSpring * 11 * Math.sin(aimRad);
         } else {
-          // 조준 시 고각 반대 방향으로 볼살이 쫀득하게 쭉 늘어남
-          const pullPx = 7 + charge * 18 + (isHardPull ? Math.sin(frameCount * 0.85) * 1.4 : 0);
-          inGameCheekDx = -Math.cos(aimRad * 0.55) * pullPx;
-          inGameCheekDy = Math.sin(aimRad * 0.55) * pullPx * 0.55;
+          // 1~9번 모션: 당길수록 볼살+별구슬이 1번 -> 5번 -> 9번 최대치까지 길~쭉하게 탄성 스트레치!
+          const pullPx = pullNorm * 26 + (isHardPull ? Math.sin(frameCount * 0.95) * 1.1 : 0);
+          inGameCheekDx = -Math.cos(aimRad) * pullPx;
+          inGameCheekDy = Math.sin(aimRad) * pullPx;
         }
       }
 
-      const winHop = phase === 'GAME_OVER' && cart.alive ? Math.abs(Math.sin(frameCount * 0.22)) * 9 : 0;
-      const hurtWobble = cart.mood === 'hurt' ? Math.sin(frameCount * 1.8) * 2.2 : 0;
+      const activeImg = useAimPoseSprite ? aimSprite3d.img : sprite3d.img;
+      const drawSize = useAimPoseSprite ? 68 : 58;
+      const drawOx = useAimPoseSprite ? spriteX - 8 : spriteX;
+      const drawOy = useAimPoseSprite ? spriteY - 5 : spriteY;
+      const warpAnchorX = useAimPoseSprite ? drawOx + 14 : cheekBaseX;
+      const warpAnchorY = useAimPoseSprite ? cheekBaseY + 4 : cheekBaseY;
       drawWarpedSprite3D(
         ctx,
-        sprite3d.img,
-        -29 + hurtWobble,
-        -56 + idleBob * 0.5 - walkHop - winHop,
-        58,
-        -18,
-        headY + 4,
+        activeImg,
+        drawOx,
+        drawOy,
+        drawSize,
+        warpAnchorX,
+        warpAnchorY,
         inGameCheekDx,
         inGameCheekDy,
-        13.5,
+        useAimPoseSprite ? 18 : 11,
         17
       );
       ctx.restore();
@@ -1017,8 +1123,8 @@ export class GameRenderer {
     }
 
     // 얼굴 본체 (애니메이션 셀 셰이딩 + 당길 때 볼살이 탱글하게 늘어나는 윤곽선!)
-    const isCheekActive = isCurrent && (phase === 'AIM' || cart.recoil > 0.02);
-    const activeStretch = isCheekActive ? Math.max(0.12, cart.aimPower / 100) : 0;
+    const isCheekActive = isCurrent && (dragging || cart.recoil > 0.02);
+    const activeStretch = isCheekActive ? pullNorm : 0;
     const strainPulse = isCheekActive && activeStretch > 0.6 ? Math.sin(frameCount * 0.35) * 1.1 : 0;
     const activePullPx = isCheekActive
       ? (4.5 + activeStretch * 9.5 + strainPulse) * (1 - Math.min(1, cart.recoil * 1.15)) -
@@ -1127,7 +1233,7 @@ export class GameRenderer {
     const showActiveCheek = isCurrent && (phase === 'AIM' || cart.recoil > 0.01);
     if (showActiveCheek) {
       const rad = (cart.aimElevation * Math.PI) / 180;
-      const charge = Math.max(0.15, cart.aimPower / 100);
+      const charge = pullNorm;
       const isAiming = phase === 'AIM' && cart.recoil <= 0.01;
       const aimDirX = Math.cos(rad);
       const aimDirY = -Math.sin(rad);
@@ -1135,129 +1241,133 @@ export class GameRenderer {
       ctx.save();
 
       if (isAiming) {
-        // 5-1) 뒤쪽(조준 반대)으로 쫀득하게 늘어난 3D 모찌 볼살 파우치
-        const jitter = isHardPull ? Math.sin(frameCount * 0.95) * 1.15 : 0;
-        const pullDist = 11 + charge * 15 + jitter;
-        const rootX = -9;
-        const rootY = headY + 3.5;
-        const pouchX = rootX - aimDirX * pullDist;
-        const pouchY = rootY - aimDirY * pullDist * 0.72;
-        const pouchR = 6.8 + charge * 4.2;
+        // 3D 볼살 늘림 전용 스프라이트(assets/chars_aim/{id}.png)가 볼살·별구슬 본체를 담당.
+        // 여기서는 발사 보간 앵커 좌표 보존 + 은은한 반짝이 별만 추가(2D 주걱 도형 완전 제거!).
+        const jitter = isHardPull ? Math.sin(frameCount * 0.85) * 0.45 : 0;
+        const pullDist = charge * 9 + jitter;
+        const cheekX = (cheekBaseX - aimDirX * pullDist) * bodySquashX;
+        const cheekY = (cheekBaseY - aimDirY * pullDist) * bodySquashY;
+        const orbX = cheekX + aimDirX * 2.2;
+        const orbY = cheekY + aimDirY * 2.2;
+        const orbR = cart.useUltimate ? 6.5 : 4.5 + charge;
 
-        // 볼살 뿌리 -> 볼살 포켓을 부드럽게 잇는 3D 탄성 브리지 (말랑한 모찌 쉐입)
-        const perpX = -aimDirY;
-        const perpY = aimDirX;
-        const skinMain = cart.spec?.primaryColor || '#FDE68A';
-        const skinEdge = cart.spec?.secondaryColor || '#B45309';
+        const lean = walkTilt + pullLean;
+        const localX = Math.cos(lean) * orbX - Math.sin(lean) * orbY + strainShakeX;
+        const localY = Math.sin(lean) * orbX + Math.cos(lean) * orbY;
+        const sx = localX * cart.facing * spriteScale;
+        const sy = localY * spriteScale;
+        this.aimCheekAnchors.set(cart.id, {
+          x: cart.x + Math.cos(cart.tiltAngle) * sx - Math.sin(cart.tiltAngle) * sy,
+          y: cart.y + Math.sin(cart.tiltAngle) * sx + Math.cos(cart.tiltAngle) * sy,
+        });
 
-        const cheekGrad = ctx.createRadialGradient(
-          pouchX - 1.5,
-          pouchY - 2.2,
-          1.2,
-          pouchX,
-          pouchY,
-          pouchR + 5
-        );
-        cheekGrad.addColorStop(0, '#FFF7ED');
-        cheekGrad.addColorStop(0.45, skinMain);
-        cheekGrad.addColorStop(0.82, '#FDA4AF');
-        cheekGrad.addColorStop(1, 'rgba(244, 114, 182, 0.92)');
-
-        ctx.save();
-        ctx.shadowColor = 'rgba(15, 23, 42, 0.32)';
-        ctx.shadowBlur = 5;
-        ctx.shadowOffsetY = 2;
-        ctx.fillStyle = cheekGrad;
-        ctx.strokeStyle = skinEdge;
-        ctx.lineWidth = 1.6;
-        ctx.beginPath();
-        ctx.moveTo(rootX + perpX * 6.5, rootY + perpY * 6.5);
-        ctx.quadraticCurveTo(
-          (rootX + pouchX) * 0.5 + perpX * 3.2,
-          (rootY + pouchY) * 0.5 + perpY * 3.2,
-          pouchX + perpX * (pouchR * 0.88),
-          pouchY + perpY * (pouchR * 0.88)
-        );
-        ctx.arc(pouchX, pouchY, pouchR, Math.atan2(perpY, perpX), Math.atan2(-perpY, -perpX), true);
-        ctx.quadraticCurveTo(
-          (rootX + pouchX) * 0.5 - perpX * 3.2,
-          (rootY + pouchY) * 0.5 - perpY * 3.2,
-          rootX - perpX * 6.5,
-          rootY - perpY * 6.5
-        );
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-        ctx.restore();
-
-        // 3D 젤리 볼살 상단 광택 하이라이트 + 발그레 홍조
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.62)';
-        ctx.beginPath();
-        ctx.ellipse(pouchX - 1.6, pouchY - pouchR * 0.36, pouchR * 0.45, pouchR * 0.22, -0.35, 0, Math.PI * 2);
-        ctx.fill();
-
-        // 5-2) 볼살 포켓 안에 쏙 감싸여 장전된 실제 3D 구슬(탄)
-        const orbX = pouchX + aimDirX * (pouchR * 0.35);
-        const orbY = pouchY + aimDirY * (pouchR * 0.35);
-        const orbR = cart.useUltimate ? 7.6 : 6.0 + charge * 1.4;
-        const shellKey = cart.selectedShell || 'ACORN_SPLIT';
-        const orbColors = cart.useUltimate
-          ? ['#FEF08A', '#F97316', '#EC4899']
-          : shellKey === 'AQUA_DRILL'
-            ? ['#E0F2FE', '#38BDF8', '#0369A1']
-            : shellKey === 'CHEESE_BOUNCE'
-              ? ['#FEF9C3', '#FACC15', '#CA8A04']
-              : ['#FEF3C7', '#FB923C', '#9A3412'];
-
-        // 차징 에너지 오라 (파워 50%+ 또는 궁극기)
-        if (charge >= 0.5 || cart.useUltimate) {
-          const auraAlpha = cart.useUltimate ? 0.55 : (charge - 0.45) * 0.7;
-          const auraR = orbR + 4 + Math.sin(frameCount * 0.28) * 2.2;
-          const auraGrad = ctx.createRadialGradient(orbX, orbY, orbR * 0.4, orbX, orbY, auraR);
-          auraGrad.addColorStop(0, `rgba(254, 240, 138, ${auraAlpha})`);
-          auraGrad.addColorStop(1, 'rgba(251, 146, 60, 0)');
-          ctx.fillStyle = auraGrad;
+        if (useAimPoseSprite) {
+          // 실제 3D 포즈 이미지(1~9번 스트레치) + 당김 강도에 따라 반짝이 별·소용돌이·탄성 진동선
+          ctx.save();
+          ctx.fillStyle = 'rgba(254, 240, 138, 0.01)';
           ctx.beginPath();
-          ctx.arc(orbX, orbY, auraR, 0, Math.PI * 2);
+          ctx.arc(orbX, orbY, orbR, 0, Math.PI * 2);
+          ctx.fill();
+
+          const stretchAmt = Math.max(charge, (Number(cart.aimPower) || 50) / 100);
+          const fxX = cheekBaseX - 20 - charge * 18;
+          const fxY = cheekBaseY + charge * 12;
+          const twinkle = 0.72 + Math.sin(frameCount * 0.24) * 0.28;
+          const drawMiniSparkle = (sx0, sy0, r0, col0) => {
+            ctx.fillStyle = col0;
+            ctx.beginPath();
+            ctx.moveTo(sx0, sy0 - r0);
+            ctx.quadraticCurveTo(sx0, sy0, sx0 + r0, sy0);
+            ctx.quadraticCurveTo(sx0, sy0, sx0, sy0 + r0);
+            ctx.quadraticCurveTo(sx0, sy0, sx0 - r0, sy0);
+            ctx.quadraticCurveTo(sx0, sy0, sx0, sy0 - r0);
+            ctx.fill();
+          };
+          drawMiniSparkle(fxX, fxY - 11, 2.8 * twinkle, '#FEF08A');
+          drawMiniSparkle(fxX + 5, fxY + 11, 2.2 * (1.2 - twinkle * 0.3), '#F9A8D4');
+
+          // 5~9번 최대 당김 구간: 탄성 진동선('))') + 미니 소용돌이(🌀)
+          if (stretchAmt >= 0.55) {
+            ctx.strokeStyle = 'rgba(192, 132, 252, 0.85)';
+            ctx.lineWidth = 1.1;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            for (let t = 0; t <= 14; t++) {
+              const a = t * 0.58 + frameCount * 0.1;
+              const r = 0.4 + t * 0.2;
+              const wx = fxX - 5 + Math.cos(a) * r;
+              const wy = fxY - 2 + Math.sin(a) * r;
+              if (t === 0) ctx.moveTo(wx, wy);
+              else ctx.lineTo(wx, wy);
+            }
+            ctx.stroke();
+
+            // 9번 최대 당김 진동 커브선
+            ctx.strokeStyle = 'rgba(51, 65, 85, 0.65)';
+            ctx.lineWidth = 1.25;
+            ctx.beginPath();
+            ctx.arc(fxX - 4, fxY + 3, 7, Math.PI * 0.68, Math.PI * 1.22);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(fxX - 7, fxY + 3, 9.5, Math.PI * 0.72, Math.PI * 1.18);
+            ctx.stroke();
+          }
+          ctx.restore();
+        } else {
+          // 폴백 (조준 이미지 로딩 전): 외곽선 없는 깔끔한 3D 구슬만 표시
+          const shellKey = cart.selectedShell || 'ACORN_SPLIT';
+          const orbColors = marbleColors(shellKey, cart.useUltimate);
+          const orbGrad = ctx.createRadialGradient(orbX - 1.8, orbY - 1.8, 0.8, orbX, orbY, orbR);
+          orbGrad.addColorStop(0, '#FFFBEB');
+          orbGrad.addColorStop(0.55, orbColors[1]);
+          orbGrad.addColorStop(1, orbColors[2]);
+          ctx.fillStyle = orbGrad;
+          ctx.beginPath();
+          ctx.arc(orbX, orbY, orbR, 0, Math.PI * 2);
           ctx.fill();
         }
-
-        // 3D 구슬 본체
-        const orbGrad = ctx.createRadialGradient(orbX - 2.2, orbY - 2.2, 1, orbX, orbY, orbR);
-        orbGrad.addColorStop(0, orbColors[0]);
-        orbGrad.addColorStop(0.55, orbColors[1]);
-        orbGrad.addColorStop(1, orbColors[2]);
-        ctx.fillStyle = orbGrad;
-        ctx.strokeStyle = 'rgba(15, 23, 42, 0.72)';
-        ctx.lineWidth = 1.4;
-        ctx.beginPath();
-        ctx.arc(orbX, orbY, orbR, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-
-        // 구슬 유리 스페큘러 점
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
-        ctx.beginPath();
-        ctx.arc(orbX - orbR * 0.32, orbY - orbR * 0.32, orbR * 0.26, 0, Math.PI * 2);
-        ctx.fill();
-
-        // 5-3) 고출력 차징 시 빨려 들어가는 별빛 에너지 입자
-        if (charge >= 0.62) {
-          for (let k = 0; k < 4; k++) {
-            const pPhase = ((frameCount * 0.08 + k * 0.25) % 1);
-            const dist = (1 - pPhase) * 20 + orbR;
-            const ang = k * 1.57 + frameCount * 0.06;
-            const px = orbX + Math.cos(ang) * dist;
-            const py = orbY + Math.sin(ang) * dist;
-            ctx.fillStyle = `rgba(254, 240, 138, ${pPhase * 0.9})`;
-            ctx.beginPath();
-            ctx.arc(px, py, 1.8 * (1 - pPhase * 0.4), 0, Math.PI * 2);
-            ctx.fill();
-          }
-        }
       } else if (cart.recoil > 0.05) {
-        // 5-4) 발사 순간: 볼살이 앞으로 팡!! 튕기며 터지는 2중 젤리 충격파 + 스피드라인 + 크림 스파크
-        const blastP = 1 - cart.recoil; // 0 -> 1
+        // 10~15번 모션: 발사 직후 빨갛게 빵빵 부푼 볼살 출렁 반동(12번) + 핑크 팡! 반동선 + 별/소용돌이 -> 15번 복귀
+        const blastP = launchT; // 일반탄·궁극기 모두 0 -> 1
+        const puffFade = Math.max(0, 1 - blastP * 1.12);
+        if (puffFade > 0.04) {
+          const wobble = Math.cos(blastP * Math.PI * 6) * Math.exp(-blastP * 3.2);
+          const puffRx = Math.max(2, (8.5 + wobble * 2.8) * puffFade);
+          const puffRy = Math.max(2, (7.4 - wobble * 2.2) * puffFade);
+          const puffX = cheekBaseX - 4.5 + wobble * 2.0;
+          const puffY = cheekBaseY + 1.5;
+
+          // 부드러운 3D 빨간 볼살 부풀어오름 (외곽선 없이 피부에 자연스럽게 블렌딩)
+          const puffGrad = ctx.createRadialGradient(puffX - 2, puffY - 2, 1, puffX, puffY, Math.max(puffRx, puffRy) + 2);
+          puffGrad.addColorStop(0, `rgba(255, 228, 230, ${0.88 * puffFade})`);
+          puffGrad.addColorStop(0.55, `rgba(251, 113, 133, ${0.78 * puffFade})`);
+          puffGrad.addColorStop(1, 'rgba(244, 63, 94, 0)');
+          ctx.fillStyle = puffGrad;
+          ctx.beginPath();
+          ctx.ellipse(puffX, puffY, puffRx, puffRy, -0.15, 0, Math.PI * 2);
+          ctx.fill();
+
+          // 12번 이미지 스타일: 볼 옆 핑크 팡! 반동 꺾쇠 + 반짝이 별 + 소용돌이
+          ctx.save();
+          ctx.strokeStyle = `rgba(251, 113, 133, ${0.9 * puffFade})`;
+          ctx.lineWidth = 1.6;
+          ctx.lineCap = 'round';
+          const sx = puffX - puffRx - 3;
+          const sy = puffY;
+          ctx.beginPath();
+          ctx.moveTo(sx - 4, sy - 6);
+          ctx.lineTo(sx, sy - 1);
+          ctx.lineTo(sx - 4, sy + 5);
+          ctx.stroke();
+
+          ctx.fillStyle = `rgba(254, 240, 138, ${0.95 * puffFade})`;
+          ctx.beginPath();
+          ctx.arc(sx - 7, sy - 7, 2.2 * puffFade, 0, Math.PI * 2);
+          ctx.arc(sx - 5, sy + 7, 1.9 * puffFade, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+
         const muzzleX = 12 + aimDirX * (10 + blastP * 12);
         const muzzleY = headY + 2 + aimDirY * (10 + blastP * 12);
 
@@ -1312,54 +1422,8 @@ export class GameRenderer {
       ctx.restore();
     }
 
-    // 6) 쎄게 당길 때(파워 65% 이상)만 나타나는 '으으으!' 힘주는 표정 오버레이 (살살 당길 땐 표정 변화 없음!)
-    if (isHardPull && sprite3d.loaded) {
-      ctx.save();
-      const eyeY = headY - 2;
-      // 기존 눈 위에 꽉 감은 '> <' 힘주는 눈 + 찌푸린 눈썹
-      ctx.fillStyle = 'rgba(254, 243, 199, 0.72)';
-      ctx.beginPath();
-      ctx.arc(-6.5, eyeY, 3.6, 0, Math.PI * 2);
-      ctx.arc(7.5, eyeY, 3.6, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.strokeStyle = '#4A2C2A';
-      ctx.lineWidth = 2.1;
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      // 왼쪽 '>'
-      ctx.beginPath();
-      ctx.moveTo(-8.5, eyeY - 2.3);
-      ctx.lineTo(-5.0, eyeY);
-      ctx.lineTo(-8.5, eyeY + 2.3);
-      ctx.stroke();
-      // 오른쪽 '<'
-      ctx.beginPath();
-      ctx.moveTo(9.5, eyeY - 2.3);
-      ctx.lineTo(6.0, eyeY);
-      ctx.lineTo(9.5, eyeY + 2.3);
-      ctx.stroke();
-
-      // 이마 땀방울 💧 + 힘줄 💢
-      ctx.fillStyle = '#38BDF8';
-      ctx.beginPath();
-      ctx.arc(13, headY - 12 + Math.sin(frameCount * 0.3) * 1.2, 2.3, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.strokeStyle = '#FB7185';
-      ctx.lineWidth = 1.6;
-      const sx = -13;
-      const sy = headY - 14;
-      ctx.beginPath();
-      ctx.moveTo(sx - 2, sy - 2);
-      ctx.lineTo(sx, sy);
-      ctx.lineTo(sx - 2, sy + 2);
-      ctx.moveTo(sx + 3, sy - 2);
-      ctx.lineTo(sx + 1, sy);
-      ctx.lineTo(sx + 3, sy + 2);
-      ctx.stroke();
-      ctx.restore();
-    }
+    // 원본 눈을 별도 도형으로 덮지 않는다. 캐릭터마다 눈 위치가 달라
+    // 기존 오버레이는 얼굴 밖에 그려질 수 있었다.
 
     ctx.restore(); // scale 복구
     ctx.restore(); // tilt 복구
@@ -1500,52 +1564,98 @@ export class GameRenderer {
    */
   drawFloatingAimHUD(ctx, cart, wind, weather, dragState) {
     const muzzle = cart.getMuzzlePosition();
-    const ringR = 58;
+    // 캐릭터 중심을 기준으로 0~90도 눈금을 그린다. 화면 좌우 방향에도 같은 각도값을 쓴다.
+    const centerX = cart.x;
+    const centerY = cart.y - 46;
+    const ringR = 67;
+    const facing = cart.facing < 0 ? -1 : 1;
+    const atAngle = (degrees, radius) => {
+      const r = degrees * Math.PI / 180;
+      return { x: centerX + facing * Math.cos(r) * radius, y: centerY - Math.sin(r) * radius };
+    };
 
     ctx.save();
-    // 1) 반투명 고각 다이얼 아크
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.65)';
-    ctx.lineWidth = 2;
-    ctx.setLineDash([4, 4]);
-    ctx.beginPath();
-    if (cart.facing === 1) {
-      ctx.arc(muzzle.baseX, muzzle.baseY, ringR, -Math.PI * 0.48, -0.06);
-    } else {
-      ctx.arc(muzzle.baseX, muzzle.baseY, ringR, -Math.PI + 0.06, -Math.PI * 0.52);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    // 명암이 다른 지형에서도 구분되는 얇은 반투명 외곽선.
+    for (const [width, color] of [[5, 'rgba(30, 41, 59, 0.55)'], [2, 'rgba(255, 255, 255, 0.90)']]) {
+      ctx.lineWidth = width;
+      ctx.strokeStyle = color;
+      ctx.beginPath();
+      for (let d = 0; d <= 90; d += 3) {
+        const p = atAngle(d, ringR);
+        if (d === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+      }
+      ctx.stroke();
     }
-    ctx.stroke();
-    ctx.setLineDash([]);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.92)';
+    ctx.lineWidth = 2;
+    for (let d = 0; d <= 90; d += 15) {
+      const p1 = atAngle(d, ringR - (d % 30 === 0 ? 8 : 5));
+      const p2 = atAngle(d, ringR + 3);
+      ctx.beginPath();
+      ctx.moveTo(p1.x, p1.y);
+      ctx.lineTo(p2.x, p2.y);
+      ctx.stroke();
+    }
 
-    // 2) 이전 턴 발사 각도 기억 마커 (영점 보정 보조)
-    if (cart.lastElevation !== null) {
-      const prevRad = (cart.lastElevation * Math.PI) / 180;
-      const px = muzzle.baseX + cart.facing * Math.cos(prevRad) * ringR;
-      const py = muzzle.baseY - Math.sin(prevRad) * ringR;
+    if (Number.isFinite(cart.lastElevation)) {
+      const previous = atAngle(cart.lastElevation, ringR);
       ctx.fillStyle = 'rgba(251, 191, 36, 0.85)';
       ctx.beginPath();
-      ctx.arc(px, py, 4.5, 0, Math.PI * 2);
+      ctx.arc(previous.x, previous.y, 3.5, 0, Math.PI * 2);
       ctx.fill();
     }
+    const elevation = Math.max(0, Math.min(90, Number(cart.aimElevation) || 0));
+    const marker = atAngle(elevation, ringR);
+    const inner = atAngle(elevation, ringR - 13);
+    ctx.strokeStyle = '#FDE68A';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(inner.x, inner.y);
+    ctx.lineTo(marker.x, marker.y);
+    ctx.stroke();
+    ctx.fillStyle = '#FDE68A';
+    ctx.beginPath();
+    ctx.arc(marker.x, marker.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+    const label = atAngle(elevation, ringR + 20);
+    const rect = this.canvas?.getBoundingClientRect?.();
+    const displayScale = rect?.width ? rect.width / WORLD.WIDTH : 1;
+    const labelSize = Math.min(36, Math.max(19, 11 / displayScale));
+    ctx.font = `bold ${labelSize}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = 'rgba(15, 23, 42, 0.9)';
+    ctx.fillStyle = '#FFFFFF';
+    const labelX = Math.max(22, Math.min(WORLD.WIDTH - 22, label.x));
+    const labelY = Math.max(16, label.y);
+    ctx.strokeText(`${Math.round(elevation)}°`, labelX, labelY);
+    ctx.fillText(`${Math.round(elevation)}°`, labelX, labelY);
 
     // 3) 슬링 드래그 중일 때 스프링 당김 밴드 시각화
     if (dragState && dragState.active) {
       ctx.strokeStyle = '#F59E0B';
       ctx.lineWidth = 3.5;
       ctx.beginPath();
-      ctx.moveTo(muzzle.baseX, muzzle.baseY);
-      ctx.lineTo(dragState.currentX, dragState.currentY);
+      const cheek = this.aimCheekAnchors.get(cart.id) || { x: muzzle.baseX, y: muzzle.baseY };
+      const endX = cheek.x + dragState.currentX - muzzle.baseX;
+      const endY = cheek.y + dragState.currentY - muzzle.baseY;
+      ctx.moveTo(cheek.x, cheek.y);
+      ctx.lineTo(endX, endY);
       ctx.stroke();
 
       ctx.fillStyle = '#FEF08A';
       ctx.strokeStyle = '#B45309';
       ctx.lineWidth = 2.5;
       ctx.beginPath();
-      ctx.arc(dragState.currentX, dragState.currentY, 10, 0, Math.PI * 2);
+      ctx.arc(endX, endY, 10, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
     }
 
-    // 4) 초반 26% 구간 가이드 점선 궤적 (역풍 감속 및 비 사거리 단축 반영)
+    // 4) 초반 1/3 길이의 짧은 황금 방향 가이드 (게임이 너무 쉬워지지 않도록 초반 방향만 표시)
     const { vx: ivx, vy: ivy } = cart.getLaunchVelocity();
     const shellSpec = SHELLS[cart.selectedShell] || SHELLS.ACORN_SPLIT;
     const isRain = weather === 'RAIN';
@@ -1555,8 +1665,9 @@ export class GameRenderer {
     let svy = ivy;
     const windAx = wind * WORLD.WIND_SCALE * shellSpec.windFactor;
     const grav = WORLD.GRAVITY * (isRain ? WORLD.RAIN_GRAVITY_MULT : 1.0);
+    const pts = [{ x: sx, y: sy }];
 
-    for (let step = 1; step <= 20; step++) {
+    for (let step = 1; step <= 9; step++) {
       svx += windAx;
       if (svx * wind < 0) {
         svx *= Math.max(0.85, 1 - Math.abs(wind) * WORLD.HEADWIND_DRAG * shellSpec.windFactor);
@@ -1568,22 +1679,76 @@ export class GameRenderer {
       svy += grav;
       sx += svx;
       sy += svy;
-      if (step % 2 === 0) {
-        const alpha = Math.max(0.12, 0.9 - step / 22);
-        ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
-        ctx.strokeStyle = `rgba(30, 41, 59, ${alpha * 0.7})`;
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.arc(sx, sy, 4.2 - step * 0.1, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
+      pts.push({ x: sx, y: sy });
+    }
+
+    // 빛나는 짧은 황금 궤적 리본 (초반 1/3)
+    if (pts.length >= 4) {
+      ctx.save();
+      ctx.lineCap = 'round';
+      ctx.shadowColor = 'rgba(254, 240, 138, 0.85)';
+      ctx.shadowBlur = 7;
+      ctx.strokeStyle = 'rgba(255, 251, 235, 0.92)';
+      ctx.lineWidth = 3.8;
+      ctx.beginPath();
+      ctx.moveTo(pts[2].x, pts[2].y);
+      for (let i = 3; i < pts.length; i++) {
+        ctx.lineTo(pts[i].x, pts[i].y);
       }
+      ctx.stroke();
+
+      ctx.strokeStyle = 'rgba(250, 204, 21, 0.72)';
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
+
+      // 초반 점선 구슬 2개
+      for (let i = 1; i <= 2; i++) {
+        ctx.fillStyle = '#FEF9C3';
+        ctx.beginPath();
+        ctx.arc(pts[i].x, pts[i].y, 2.4 + i * 0.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // 끝 황금 화살표(➤)
+      const tip = pts[pts.length - 1];
+      const prev = pts[pts.length - 2];
+      const tipAng = Math.atan2(tip.y - prev.y, tip.x - prev.x);
+      ctx.save();
+      ctx.translate(tip.x, tip.y);
+      ctx.rotate(tipAng);
+      ctx.fillStyle = '#FFFBEB';
+      ctx.strokeStyle = '#F59E0B';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(9, 0);
+      ctx.lineTo(-4, -6);
+      ctx.lineTo(-1, 0);
+      ctx.lineTo(-4, 6);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+
+      // 포물선 위 반짝이 별 1개
+      const sp = pts[5];
+      if (sp) {
+        ctx.fillStyle = '#FEF08A';
+        ctx.beginPath();
+        const r = 4.6;
+        ctx.moveTo(sp.x, sp.y - r);
+        ctx.quadraticCurveTo(sp.x, sp.y, sp.x + r, sp.y);
+        ctx.quadraticCurveTo(sp.x, sp.y, sp.x, sp.y + r);
+        ctx.quadraticCurveTo(sp.x, sp.y, sp.x - r, sp.y);
+        ctx.quadraticCurveTo(sp.x, sp.y, sp.x, sp.y - r);
+        ctx.fill();
+      }
+      ctx.restore();
     }
 
     ctx.restore();
   }
 
-  drawProjectile(ctx, proj, frameCount) {
+  drawProjectile(ctx, proj, frameCount, visualPosition = null) {
     // 연기 궤적
     for (let i = 0; i < proj.trail.length; i++) {
       const pt = proj.trail[i];
@@ -1602,125 +1767,47 @@ export class GameRenderer {
 
     // 볼살에서 뾱! 발사된 슈팅 젤리 미사일 본체 — 비행 방향을 향해 꼬리 불꽃과 함께 날아감!
     ctx.save();
-    ctx.translate(proj.x, proj.y);
+    ctx.translate(visualPosition?.x ?? proj.x, visualPosition?.y ?? proj.y);
     const flightAngle = Math.atan2(proj.vy, proj.vx);
     ctx.rotate(proj.reverseSpin ? proj.rotation : flightAngle);
 
     const sc = proj.isUltimate ? 1.5 : proj.isSubShell ? 0.8 : proj.isHeavySkill ? 1.25 : 1.05;
     ctx.scale(sc, sc);
 
-    // 미사일 추진 불꽃 / 젤리 꼬리
-    const flameLen = 11 + Math.sin(frameCount * 0.8) * 3.5;
-    ctx.fillStyle = proj.isUltimate
-      ? '#F97316'
-      : proj.shellKey === 'AQUA_DRILL'
-        ? '#38BDF8'
-        : proj.shellKey === 'CHEESE_BOUNCE'
-          ? '#FDE047'
-          : '#FDBA74';
+    // 장전 구슬과 같은 색·질감의 원형 탄. 꼬리는 추진기가 아닌 속도 잔상이다.
+    const colors = marbleColors(proj.shellKey, proj.isUltimate);
+    const streak = 6 + Math.sin(frameCount * 0.5) * 1.5;
+    ctx.fillStyle = `${colors[1]}88`;
     ctx.beginPath();
-    ctx.moveTo(-6, -5);
-    ctx.lineTo(-6 - flameLen, 0);
-    ctx.lineTo(-6, 5);
-    ctx.closePath();
+    ctx.ellipse(-9, 0, streak, 4.2, 0, 0, Math.PI * 2);
     ctx.fill();
-
-    // 구슬 종류별 개성 있는 비행 탄두 디자인!
-    if (proj.isUltimate) {
-      // 🔥 궁극기 메가 혜성
-      ctx.fillStyle = '#F97316';
-      ctx.strokeStyle = '#FEF08A';
-      ctx.lineWidth = 2.4;
+    const orbGrad = ctx.createRadialGradient(-3.2, -3.6, 0.5, 0, 0, 10);
+    orbGrad.addColorStop(0, colors[0]);
+    orbGrad.addColorStop(0.55, colors[1]);
+    orbGrad.addColorStop(1, colors[2]);
+    ctx.fillStyle = orbGrad;
+    ctx.strokeStyle = 'rgba(69, 26, 3, 0.65)';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.arc(0, 0, 10, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+    ctx.beginPath();
+    ctx.ellipse(-3.2, -4.3, 3.1, 1.5, -0.4, 0, Math.PI * 2);
+    ctx.fill();
+    if (proj.shellKey === 'CHEESE_BOUNCE' && !proj.isUltimate) {
+      ctx.fillStyle = 'rgba(146, 64, 14, 0.55)';
       ctx.beginPath();
-      ctx.ellipse(2, 0, 13, 9.5, 0, 0, Math.PI * 2);
+      ctx.arc(2, 3, 1.7, 0, Math.PI * 2);
+      ctx.arc(-3, 2, 1.1, 0, Math.PI * 2);
       ctx.fill();
+    } else if (proj.shellKey === 'AQUA_DRILL' && !proj.isUltimate) {
+      ctx.strokeStyle = 'rgba(224, 242, 254, 0.85)';
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.arc(0, 0, 5, -1.3, 1.4);
       ctx.stroke();
-      ctx.fillStyle = '#FEF08A';
-      ctx.beginPath();
-      ctx.arc(4, -2.5, 4.0, 0, Math.PI * 2);
-      ctx.fill();
-    } else if (proj.shellKey === 'CHEESE_BOUNCE') {
-      // 🧀 탱탱 치즈볼: 회전하는 에멘탈 치즈 구멍 + 탱글한 광택!
-      ctx.save();
-      ctx.rotate(frameCount * 0.28);
-      ctx.fillStyle = '#FACC15';
-      ctx.strokeStyle = '#92400E';
-      ctx.lineWidth = 2.2;
-      ctx.beginPath();
-      ctx.arc(0, 0, 10.2, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-      // 치즈 구멍 3개
-      ctx.fillStyle = '#D97706';
-      ctx.beginPath();
-      ctx.arc(-3.5, -2.5, 2.3, 0, Math.PI * 2);
-      ctx.arc(4.0, 2.0, 2.7, 0, Math.PI * 2);
-      ctx.arc(-1.5, 4.5, 1.7, 0, Math.PI * 2);
-      ctx.fill();
-      // 광택
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-      ctx.beginPath();
-      ctx.ellipse(-3, -5, 3.2, 1.4, -0.4, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    } else if (proj.shellKey === 'AQUA_DRILL') {
-      // 💧 물방울 시추볼: 뾰족한 드릴형 물방울 + 회전 나선 링!
-      ctx.fillStyle = '#0EA5E9';
-      ctx.strokeStyle = '#0369A1';
-      ctx.lineWidth = 2.2;
-      ctx.beginPath();
-      ctx.moveTo(14, 0);
-      ctx.quadraticCurveTo(3, -10, -8, -7);
-      ctx.arc(-8, 0, 7, -Math.PI * 0.5, Math.PI * 0.5, true);
-      ctx.quadraticCurveTo(3, 10, 14, 0);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-
-      // 드릴 나선 줄무늬
-      ctx.strokeStyle = '#E0F2FE';
-      ctx.lineWidth = 2.0;
-      const drillShift = (frameCount * 0.8) % 6;
-      ctx.beginPath();
-      ctx.moveTo(-4 + drillShift, -5.5);
-      ctx.lineTo(-1 + drillShift, 5.5);
-      ctx.moveTo(2 + drillShift * 0.6, -4.0);
-      ctx.lineTo(4.5 + drillShift * 0.6, 4.0);
-      ctx.stroke();
-
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-      ctx.beginPath();
-      ctx.ellipse(2, -3.5, 4.2, 1.6, -0.2, 0, Math.PI * 2);
-      ctx.fill();
-    } else {
-      // 🌰 도토리 팝볼: 귀여운 도토리 모자 + 황금 갈색 몸통!
-      ctx.fillStyle = '#D97706';
-      ctx.strokeStyle = '#451A03';
-      ctx.lineWidth = 2.1;
-      ctx.beginPath();
-      ctx.ellipse(3, 0, 10, 8, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-
-      // 도토리 갓(모자) + 꼭지
-      ctx.fillStyle = '#78350F';
-      ctx.beginPath();
-      ctx.ellipse(-4, 0, 5.5, 9.2, 0, Math.PI * 0.5, Math.PI * 1.5);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-
-      ctx.strokeStyle = '#451A03';
-      ctx.lineWidth = 2.4;
-      ctx.beginPath();
-      ctx.moveTo(-9, 0);
-      ctx.lineTo(-12.5, 0);
-      ctx.stroke();
-
-      ctx.fillStyle = '#FEF3C7';
-      ctx.beginPath();
-      ctx.ellipse(5, -3, 3.8, 1.8, 0, 0, Math.PI * 2);
-      ctx.fill();
     }
 
     // 에어 트리거 가능 상태일 때 반짝이는 링 표시
