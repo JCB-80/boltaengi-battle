@@ -138,7 +138,7 @@ export class CoasterCart {
     if (!this.alive) return;
 
     if (this.recoil > 0) {
-      this.recoil = Math.max(0, this.recoil * 0.78 - 0.01);
+      this.recoil = Math.max(0, this.recoil - 0.032);
     }
     if (this.tornadoImmuneFrames > 0) {
       this.tornadoImmuneFrames--;

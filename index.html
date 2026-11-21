@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Jua&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="./styles/main.css?v=68" />
+  <link rel="stylesheet" href="./styles/main.css?v=69" />
 </head>
 <body>
   <!-- 0. 최초 구동 시 구글 전면 광고(Interstitial Ad) 게이트 -->
@@ -272,14 +272,10 @@
       <div id="canvasFrame" class="canvas-frame">
         <canvas id="gameCanvas" width="1600" height="900"></canvas>
 
-        <!-- 상단 중앙 플로팅 매치/체력/바람 HUD -->
+        <!-- 상단 중앙 플로팅 턴 · 바람 · 날씨 HUD (시원한 하늘 시야 확보) -->
         <div id="topScorePill" class="floating-top-hud">
-          <div class="hud-player left">
-            <span id="hudLeftName" class="hud-p-name">나 (모찌웅)</span>
-            <span id="hudLeftHp" class="hud-hp-badge">HP 120</span>
-          </div>
           <div class="hud-center-meta">
-            <span id="turnTimelineBadge" class="hud-turn-badge">TURN 1 · ⏱ 20초</span>
+            <span id="turnTimelineBadge" class="hud-turn-badge">T1 · ⏱ 20초</span>
             <div class="hud-wind-inline">
               <div class="wind-meter-track">
                 <div class="wind-meter-center"></div>
@@ -288,10 +284,6 @@
               <strong id="windValueText" class="hud-wind-text">무풍 0.0</strong>
               <button id="weatherToggleBtn" type="button" class="weather-pill" title="날씨 전환">☀️ 맑음</button>
             </div>
-          </div>
-          <div class="hud-player right">
-            <span id="hudRightName" class="hud-p-name">AI</span>
-            <span id="hudRightHp" class="hud-hp-badge enemy">HP 120</span>
           </div>
         </div>
 
@@ -303,9 +295,34 @@
           <button id="backToLobbyBtn" type="button" class="floating-lobby-btn">로비</button>
         </div>
 
+        <!-- 하단 중앙 플로팅 양측 3D 아바타 & 체력바 (고각·구슬 사이 구름 공간 활용) -->
+        <div id="bottomHpHud" class="floating-bottom-hp-hud">
+          <div class="hud-player left">
+            <img id="hudLeftAvatar" class="hud-avatar" src="./assets/chars/M01_MOCHI.png" alt="나" />
+            <div class="hud-p-info">
+              <div class="hud-p-row">
+                <span id="hudLeftName" class="hud-p-name">모찌웅</span>
+                <span id="hudLeftHp" class="hud-hp-badge">120</span>
+              </div>
+              <div class="hud-hp-track"><div id="hudLeftHpBar" class="hud-hp-fill" style="width:100%"></div></div>
+            </div>
+          </div>
+          <span class="hud-vs-badge">VS</span>
+          <div class="hud-player right">
+            <div class="hud-p-info right">
+              <div class="hud-p-row right">
+                <span id="hudRightHp" class="hud-hp-badge enemy">120</span>
+                <span id="hudRightName" class="hud-p-name">AI</span>
+              </div>
+              <div class="hud-hp-track"><div id="hudRightHpBar" class="hud-hp-fill enemy" style="width:100%"></div></div>
+            </div>
+            <img id="hudRightAvatar" class="hud-avatar enemy" src="./assets/chars/F11_BERRY.png" alt="상대" />
+          </div>
+        </div>
+
         <!-- 좌하단 플로팅 고각 카드 -->
         <div class="floating-corner-card left">
-          <span class="corner-label">고각</span>
+          <span class="corner-label">📐 고각</span>
           <strong id="angleValueText" class="corner-val">45°</strong>
           <button id="angleMinusBtn" type="button" class="mini-btn hidden">-</button>
           <button id="anglePlusBtn" type="button" class="mini-btn hidden">+</button>
@@ -536,6 +553,6 @@
   </aside>
 
   <script src="./vendor/matter.min.js"></script>
-  <script type="module" src="./src/main.js?v=48"></script>
+  <script type="module" src="./src/main.js?v=49"></script>
 </body>
 </html>

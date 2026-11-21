@@ -133,10 +133,14 @@ const ui = {
   closeRewardAdBtn: document.getElementById('closeRewardAdBtn'),
   googleAdContainer: document.querySelector('#googleAdFooterSlot .google-ad-container'),
 
+  hudLeftAvatar: document.getElementById('hudLeftAvatar'),
   hudLeftName: document.getElementById('hudLeftName'),
   hudLeftHp: document.getElementById('hudLeftHp'),
+  hudLeftHpBar: document.getElementById('hudLeftHpBar'),
+  hudRightAvatar: document.getElementById('hudRightAvatar'),
   hudRightName: document.getElementById('hudRightName'),
   hudRightHp: document.getElementById('hudRightHp'),
+  hudRightHpBar: document.getElementById('hudRightHpBar'),
   shellCycleBtn: document.getElementById('shellCycleBtn'),
   shellPopover: document.getElementById('shellPopover'),
 
@@ -227,11 +231,27 @@ function syncHud(state) {
   const oppCart = carts.find((c) => c !== myCart) || carts[1];
   if (myCart && ui.hudLeftName && ui.hudLeftHp) {
     ui.hudLeftName.textContent = myCart.spec?.name || myCart.displayName;
-    ui.hudLeftHp.textContent = `HP ${Math.max(0, myCart.hp)}`;
+    const hpVal = Math.max(0, myCart.hp);
+    const maxHp = Math.max(1, myCart.maxHp || 120);
+    ui.hudLeftHp.textContent = `${hpVal}`;
+    if (ui.hudLeftHpBar) ui.hudLeftHpBar.style.width = `${Math.min(100, Math.round((hpVal / maxHp) * 100))}%`;
+    const charId = myCart.spec?.id || myCart.charKey || 'M01_MOCHI';
+    if (ui.hudLeftAvatar && ui.hudLeftAvatar.dataset.char !== charId) {
+      ui.hudLeftAvatar.dataset.char = charId;
+      ui.hudLeftAvatar.src = `./assets/chars/${encodeURIComponent(charId)}.png`;
+    }
   }
   if (oppCart && ui.hudRightName && ui.hudRightHp) {
     ui.hudRightName.textContent = oppCart.spec?.name || oppCart.displayName;
-    ui.hudRightHp.textContent = `HP ${Math.max(0, oppCart.hp)}`;
+    const hpVal = Math.max(0, oppCart.hp);
+    const maxHp = Math.max(1, oppCart.maxHp || 120);
+    ui.hudRightHp.textContent = `${hpVal}`;
+    if (ui.hudRightHpBar) ui.hudRightHpBar.style.width = `${Math.min(100, Math.round((hpVal / maxHp) * 100))}%`;
+    const charId = oppCart.spec?.id || oppCart.charKey || 'F11_BERRY';
+    if (ui.hudRightAvatar && ui.hudRightAvatar.dataset.char !== charId) {
+      ui.hudRightAvatar.dataset.char = charId;
+      ui.hudRightAvatar.src = `./assets/chars/${encodeURIComponent(charId)}.png`;
+    }
   }
   const timerText = phase === 'AIM' && Number.isFinite(turnTimeLeft) ? ` · ⏱ ${turnTimeLeft}초` : '';
   const compactHud = window.innerHeight <= 540;

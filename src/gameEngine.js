@@ -652,27 +652,36 @@ export class GameEngine {
   ) {
     if (isUltimate || isHeavySkill) {
       this.audio.playHeavyImpact();
-      this.renderer.addShake(isUltimate ? 26 : 16);
-      this.renderer.addFlash(isUltimate ? '#FDBA74' : '#FEF08A', isUltimate ? 0.42 : 0.22);
-      this.hitstopFrames = isUltimate ? 5 : 3;
+      this.renderer.addShake(isUltimate ? 28 : 19);
+      this.renderer.addFlash(isUltimate ? '#FDBA74' : '#FEF08A', isUltimate ? 0.44 : 0.25);
+      this.hitstopFrames = isUltimate ? 6 : 3;
     } else {
       this.audio.playExplosion(radius);
-      this.renderer.addShake(Math.min(16, radius * 0.28));
-      if (customLabel) {
-        this.renderer.addFlash('#FEF3C7', 0.16);
-        this.hitstopFrames = 2;
-      }
+      this.renderer.addShake(Math.min(20, Math.max(10, radius * 0.4)));
+      this.renderer.addFlash('#FEF3C7', customLabel ? 0.22 : 0.13);
+      this.hitstopFrames = customLabel ? 3 : 2;
     }
 
-    // 1) 지형 실시간 원형 굴착 (실제 땅에 닿아 지형이 파였을 때만 진동 — 공중 이탈 시 진동 없음)
+    // 1) 지형 실시간 원형 굴착 + 물리 지반 진동 & 분출 효과
     const carvedCells = this.terrain.carveCrater(cx, cy, radius);
     if (carvedCells > 0) {
-      const vibMs = isUltimate || isHeavySkill ? 120 : 60;
+      const vibMs = isUltimate ? 200 : isHeavySkill ? 140 : 90;
       try {
         window.AndroidBridge?.vibrate?.(vibMs);
-        navigator.vibrate?.(vibMs);
+        navigator.vibrate?.(isUltimate ? [70, 30, 120] : [55, 22, 65]);
       } catch {
         // ignore vibration errors
+      }
+      this.spawnGroundImpactFx(cx, cy, radius, color, isHeavySkill || isUltimate);
+      // 지반 충격으로 근처 캐릭터가 땅 울림에 살짝 '통!' 튀어오르는 물리 반응
+      const tremorRadius = radius * 2.1;
+      for (const c of this.carts) {
+        if (!c.alive || !c.grounded) continue;
+        const d = Math.hypot(c.x - cx, c.y - cy);
+        if (d >= radius * 1.35 && d < tremorRadius) {
+          const tRatio = 1 - d / tremorRadius;
+          c.applyKnockback((c.x >= cx ? 1 : -1) * 1.4 * tRatio, -2.8 * tRatio);
+        }
       }
     }
 
@@ -760,6 +769,57 @@ export class GameEngine {
         color: '#FACC15',
         label: '메가 해머 2차 충격!',
         isHeavySkill: true,
+      });
+    }
+  }
+
+  /**
+   * 바닥 착탄 시 물리적인 지반 분출(위로 솟구치는 빵/크림 덩어리 + 좌우 먼지 기둥 + 3중 충격파)
+   */
+  spawnGroundImpactFx(cx, cy, radius, color = '#FB923C', isHeavy = false) {
+    // 1) 다중 충격파 링 (화이트 플래시 코어 + 컬러 링 + 외곽 지반 파동)
+    this.shockwaves.push({ x: cx, y: cy, r: 5, maxR: radius * 1.15, alpha: 0.98, color: '#FFFFFF' });
+    this.shockwaves.push({ x: cx, y: cy, r: 10, maxR: radius * (isHeavy ? 2.15 : 1.75), alpha: 0.9, color });
+
+    // 2) 위로 솟구쳤다가 중력으로 떨어지는 빵 부스러기·크림·화염 파편 분수
+    const crumbColors = ['#D99B66', '#B45309', '#FEF3C7', '#FDE68A', color];
+    const fountainCount = isHeavy ? 30 : 20;
+    for (let i = 0; i < fountainCount; i++) {
+      const spread = (Math.random() - 0.5) * Math.PI * 0.85; // 위쪽 부채꼴 (-76° ~ +76°)
+      const ang = -Math.PI * 0.5 + spread;
+      const spd = (isHeavy ? 4.2 : 3.0) + Math.random() * (isHeavy ? 6.5 : 4.8);
+      const life = 28 + Math.floor(Math.random() * 26);
+      this.particles.push({
+        x: cx + (Math.random() - 0.5) * radius * 0.45,
+        y: cy - 2,
+        vx: Math.cos(ang) * spd,
+        vy: Math.sin(ang) * spd - 1.5,
+        size: 3.4 + Math.random() * 5.2,
+        color: crumbColors[i % crumbColors.length],
+        square: i % 3 !== 0,
+        rot: Math.random() * Math.PI,
+        life,
+        maxLife: life,
+      });
+    }
+
+    // 3) 바닥을 타고 좌우로 낮게 밀려나는 몽글 연기/먼지 기둥
+    const dustCount = isHeavy ? 14 : 9;
+    for (let i = 0; i < dustCount; i++) {
+      const dir = i % 2 === 0 ? 1 : -1;
+      const spd = 1.6 + Math.random() * (isHeavy ? 5.2 : 3.8);
+      const life = 22 + Math.floor(Math.random() * 18);
+      this.particles.push({
+        x: cx + dir * (4 + Math.random() * 10),
+        y: cy - 3,
+        vx: dir * spd,
+        vy: -(0.6 + Math.random() * 1.8),
+        size: 6.5 + Math.random() * 6.5,
+        color: i % 3 === 0 ? '#FFFBEB' : '#E2E8F0',
+        square: false,
+        rot: 0,
+        life,
+        maxLife: life,
       });
     }
   }

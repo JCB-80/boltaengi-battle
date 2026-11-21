@@ -252,14 +252,17 @@ export class OnlineBattleClient {
         if (this.appliedCraterIds.has(cr.id)) continue;
         this.appliedCraterIds.add(cr.id);
         const carved = engine.terrain.carveCrater(cr.cx, cr.cy, cr.r);
-        engine.spawnBurst(cr.cx, cr.cy, '#FDE68A', 16, 4.5);
-        engine.renderer.addShake(8);
-        engine.audio.playImpact?.(cr.r > 50);
+        const isHeavy = cr.r > 50;
+        engine.spawnBurst(cr.cx, cr.cy, '#FDE68A', isHeavy ? 26 : 16, isHeavy ? 6.2 : 4.8);
+        engine.renderer.addShake(isHeavy ? 20 : 13);
+        engine.renderer.addFlash('#FEF3C7', isHeavy ? 0.28 : 0.14);
+        engine.audio.playImpact?.(isHeavy);
         if (carved > 0) {
-          const vibMs = cr.r > 50 ? 120 : 60;
+          engine.spawnGroundImpactFx?.(cr.cx, cr.cy, cr.r, '#FB923C', isHeavy);
+          const vibMs = isHeavy ? 150 : 90;
           try {
             window.AndroidBridge?.vibrate?.(vibMs);
-            navigator.vibrate?.(vibMs);
+            navigator.vibrate?.(isHeavy ? [70, 30, 110] : [55, 22, 65]);
           } catch {
             // ignore
           }

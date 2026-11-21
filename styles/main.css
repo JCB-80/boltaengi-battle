@@ -2732,6 +2732,300 @@ select,
   }
 }
 
+/* =========================================================
+   상용 아케이드 인게임 UI 전면 리디자인 (다크 글래스 + 골드 3D)
+   ========================================================= */
+.floating-top-hud {
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.9), rgba(30, 41, 59, 0.88)) !important;
+  border: 1.5px solid rgba(250, 204, 21, 0.45) !important;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.14) !important;
+  backdrop-filter: blur(8px) !important;
+  padding: 5px 14px !important;
+  gap: 10px !important;
+}
+
+.floating-top-hud .hud-turn-badge {
+  background: linear-gradient(135deg, #F59E0B, #D97706) !important;
+  color: #FFFBEB !important;
+  border: 1px solid rgba(254, 240, 138, 0.7) !important;
+  box-shadow: 0 2px 6px rgba(217, 119, 6, 0.45) !important;
+  padding: 3px 11px !important;
+  font-weight: 800 !important;
+}
+
+.floating-top-hud .hud-wind-text {
+  color: #E0F2FE !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.floating-top-hud .wind-meter-track {
+  background: rgba(15, 23, 42, 0.75) !important;
+  border: 1px solid rgba(148, 163, 184, 0.35) !important;
+}
+
+.floating-top-hud .wind-meter-center {
+  background: #FDE047 !important;
+}
+
+.floating-top-actions .floating-icon-btn,
+.floating-top-actions .floating-lobby-btn {
+  background: linear-gradient(180deg, rgba(30, 41, 59, 0.92), rgba(15, 23, 42, 0.94)) !important;
+  color: #F8FAFC !important;
+  border: 1.5px solid rgba(148, 163, 184, 0.4) !important;
+  box-shadow: 0 3px 0 rgba(2, 6, 23, 0.65), 0 6px 12px rgba(0, 0, 0, 0.32) !important;
+}
+
+/* 하단 구름 띠 중앙: 양측 3D 아바타 & 실시간 체력 게이지 바 */
+.floating-bottom-hp-hud {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 12px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.92), rgba(30, 41, 59, 0.92));
+  border: 1.5px solid rgba(250, 204, 21, 0.5);
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(8px);
+  max-width: calc(100% - 310px);
+}
+
+.floating-bottom-hp-hud .hud-player {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.hud-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  object-fit: contain;
+  background: radial-gradient(circle at 35% 30%, rgba(134, 239, 172, 0.4), rgba(15, 23, 42, 0.9));
+  border: 2px solid #4ADE80;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  flex: 0 0 auto;
+}
+
+.hud-avatar.enemy {
+  background: radial-gradient(circle at 35% 30%, rgba(253, 164, 175, 0.4), rgba(15, 23, 42, 0.9));
+  border-color: #FB7185;
+}
+
+.hud-p-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 112px;
+  min-width: 78px;
+}
+
+.hud-p-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  line-height: 1;
+}
+
+.floating-bottom-hp-hud .hud-p-name {
+  font-size: 12px;
+  font-weight: 800;
+  color: #F8FAFC;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.floating-bottom-hp-hud .hud-hp-badge {
+  padding: 1px 6px !important;
+  border-radius: 999px !important;
+  font-size: 10.5px !important;
+  font-weight: 900 !important;
+  background: rgba(34, 197, 94, 0.25) !important;
+  color: #86EFAC !important;
+  border: 1px solid rgba(74, 222, 128, 0.5) !important;
+}
+
+.floating-bottom-hp-hud .hud-hp-badge.enemy {
+  background: rgba(244, 63, 94, 0.25) !important;
+  color: #FDA4AF !important;
+  border-color: rgba(251, 113, 133, 0.5) !important;
+}
+
+.hud-hp-track {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(2, 6, 23, 0.78);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  overflow: hidden;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+
+.hud-hp-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #16A34A, #4ADE80);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.38);
+  transition: width 0.28s ease;
+}
+
+.hud-hp-fill.enemy {
+  background: linear-gradient(90deg, #FB7185, #E11D48);
+  margin-left: auto;
+}
+
+.hud-vs-badge {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #FACC15, #EA580C);
+  color: #FFFBEB;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  box-shadow: 0 2px 6px rgba(234, 88, 12, 0.45);
+}
+
+/* 좌하단 고각 & 우하단 구슬 카드 (하얀 구름 위에서도 선명한 다크 3D 위젯) */
+.floating-corner-card {
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.92), rgba(30, 41, 59, 0.92)) !important;
+  border: 1.5px solid rgba(56, 189, 248, 0.55) !important;
+  box-shadow: 0 4px 0 rgba(2, 6, 23, 0.55), 0 8px 18px rgba(15, 23, 42, 0.4) !important;
+  color: #F8FAFC !important;
+  bottom: 8px !important;
+}
+
+.floating-corner-card.right {
+  border-color: rgba(250, 204, 21, 0.55) !important;
+}
+
+.floating-corner-card .corner-label {
+  color: #94A3B8 !important;
+  font-size: 11px !important;
+}
+
+.floating-corner-card .corner-val {
+  color: #FDE047 !important;
+  font-size: 14px !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.floating-corner-card .floating-shell-btn {
+  color: #F8FAFC !important;
+}
+
+.floating-corner-card .shell-arrow {
+  color: #FACC15 !important;
+}
+
+/* 최하단 컨트롤 데크: 다크 네이비 3D 아케이드 콘솔 */
+.control-dock.slim-dock {
+  background: linear-gradient(180deg, #1E293B 0%, #0F172A 100%) !important;
+  border: 1.5px solid rgba(250, 204, 21, 0.38) !important;
+  box-shadow: 0 8px 24px rgba(2, 6, 23, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.14) !important;
+  border-radius: 16px !important;
+  padding: 7px 12px !important;
+  gap: 10px !important;
+}
+
+.slim-dock .step-btn {
+  background: linear-gradient(180deg, #334155, #1E293B) !important;
+  border: 1.5px solid rgba(148, 163, 184, 0.45) !important;
+  color: #F8FAFC !important;
+  box-shadow: 0 3px 0 #020617 !important;
+  border-radius: 11px !important;
+}
+
+.slim-dock .step-btn:active {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 #020617 !important;
+}
+
+.slim-dock .fuel-bar-track.slim-fuel {
+  background: rgba(2, 6, 23, 0.8) !important;
+  border: 1.5px solid rgba(52, 211, 153, 0.45) !important;
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.65) !important;
+}
+
+.slim-dock #powerRange {
+  height: 14px !important;
+  border-radius: 999px !important;
+  background: linear-gradient(90deg, #38BDF8 0%, #FACC15 48%, #F97316 78%, #EF4444 100%) !important;
+  border: 1.5px solid rgba(255, 255, 255, 0.25) !important;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.45), 0 0 10px rgba(249, 115, 22, 0.25) !important;
+}
+
+.slim-dock #powerRange::-webkit-slider-thumb {
+  width: 22px !important;
+  height: 22px !important;
+  border-radius: 50% !important;
+  background: radial-gradient(circle at 35% 30%, #FFFBEB, #FACC15 55%, #EA580C 100%) !important;
+  border: 2.5px solid #FFFFFF !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55) !important;
+}
+
+.slim-dock .dial-val {
+  background: rgba(2, 6, 23, 0.85) !important;
+  color: #FDE047 !important;
+  border: 1.5px solid rgba(250, 204, 21, 0.55) !important;
+  padding: 5px 10px !important;
+  border-radius: 10px !important;
+  font-size: 13.5px !important;
+  font-weight: 900 !important;
+  min-width: 48px !important;
+  text-align: center !important;
+}
+
+.slim-dock .ult-chip {
+  flex: 0 0 auto !important;
+  min-width: 118px !important;
+  padding: 9px 14px !important;
+  border-radius: 12px !important;
+  background: linear-gradient(180deg, #475569, #334155) !important;
+  border: 1.5px solid rgba(148, 163, 184, 0.45) !important;
+  color: #E2E8F0 !important;
+  font-weight: 900 !important;
+  box-shadow: 0 3px 0 #0F172A !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+
+.slim-dock .ult-chip:not(:disabled) {
+  background: linear-gradient(180deg, #C026D3 0%, #7E22CE 100%) !important;
+  border: 1.5px solid #FDE047 !important;
+  color: #FFFBEB !important;
+  box-shadow: 0 3px 0 #581C87, 0 0 16px rgba(217, 70, 239, 0.55) !important;
+  animation: ultPulseGlow 1.3s ease-in-out infinite !important;
+}
+
+@keyframes ultPulseGlow {
+  0%, 100% { box-shadow: 0 3px 0 #581C87, 0 0 12px rgba(250, 204, 21, 0.45); }
+  50% { box-shadow: 0 3px 0 #581C87, 0 0 22px rgba(250, 204, 21, 0.85); }
+}
+
+.slim-dock .slim-fire-btn {
+  background: linear-gradient(180deg, #FB923C 0%, #EA580C 60%, #C2410C 100%) !important;
+  border: 1.5px solid #FDE68A !important;
+  color: #FFFFFF !important;
+  font-weight: 900 !important;
+  letter-spacing: 0.02em !important;
+  border-radius: 13px !important;
+  padding: 10px 20px !important;
+  box-shadow: 0 4px 0 #7C2D12, 0 6px 16px rgba(234, 88, 12, 0.45), inset 0 2px 0 rgba(255, 255, 255, 0.35) !important;
+  text-shadow: 0 1px 2px rgba(124, 45, 18, 0.8) !important;
+}
+
+.slim-dock .slim-fire-btn:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #7C2D12 !important;
+}
+
 /* 모바일 가로모드 최우선 적용 (S22/S25 높이 540px 이하) */
 @media (max-height: 540px) and (orientation: landscape) {
   body:has(#gameScreen:not(.hidden)) .google-ad-footer {
@@ -2771,21 +3065,44 @@ select,
   }
   .floating-top-hud {
     top: 4px !important;
-    left: 6px !important;
-    transform: none !important;
-    max-width: calc(100% - 140px) !important;
-    padding: 2px 8px !important;
-    gap: 4px !important;
+    left: 50% !important;
+    transform: translateX(-50%) !important;
+    max-width: calc(100% - 170px) !important;
+    padding: 3px 10px !important;
+    gap: 6px !important;
   }
-  .floating-top-hud .hud-p-name {
-    max-width: 48px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    font-size: 11px;
+  .floating-bottom-hp-hud {
+    bottom: 4px !important;
+    padding: 3px 8px !important;
+    gap: 6px !important;
+    border-radius: 12px !important;
+    max-width: calc(100% - 210px) !important;
   }
-  .floating-top-hud .hud-hp-badge {
-    padding: 2px 6px !important;
-    font-size: 10.5px !important;
+  .floating-bottom-hp-hud .hud-avatar {
+    width: 24px !important;
+    height: 24px !important;
+  }
+  .floating-bottom-hp-hud .hud-p-info {
+    width: 72px !important;
+    min-width: 58px !important;
+    gap: 2px !important;
+  }
+  .floating-bottom-hp-hud .hud-p-name {
+    font-size: 10px !important;
+  }
+  .floating-bottom-hp-hud .hud-hp-badge {
+    font-size: 9.5px !important;
+    padding: 1px 4px !important;
+  }
+  .floating-bottom-hp-hud .hud-hp-track {
+    height: 6px !important;
+  }
+  .floating-corner-card {
+    bottom: 4px !important;
+    padding: 3px 8px !important;
+  }
+  .floating-corner-card .corner-val {
+    font-size: 11.5px !important;
   }
   .floating-top-hud .wind-meter-track {
     display: none !important;
@@ -2815,31 +3132,37 @@ select,
     gap: 6px !important;
   }
   .slim-move-group {
-    flex: 1 1 175px !important;
-    min-width: 160px !important;
+    flex: 1 1 132px !important;
+    min-width: 120px !important;
   }
   .slim-fuel {
-    flex: 1 1 92px !important;
-    min-width: 92px !important;
+    flex: 1 1 70px !important;
+    min-width: 68px !important;
   }
   .slim-fuel-txt {
-    font-size: 10px !important;
+    font-size: 9.5px !important;
   }
   .slim-power-group {
-    flex: 1.2 1 160px !important;
-    min-width: 130px !important;
+    flex: 1.2 1 125px !important;
+    min-width: 105px !important;
+  }
+  .slim-dock .dial-val {
+    padding: 3px 6px !important;
+    min-width: 36px !important;
+    font-size: 11px !important;
   }
   .slim-dock .ult-chip {
     flex: 0 0 auto !important;
-    padding: 6px 10px !important;
-    font-size: 11.5px !important;
+    min-width: 0 !important;
+    padding: 6px 9px !important;
+    font-size: 11px !important;
   }
-  .slim-fire-btn {
+  .slim-dock .slim-fire-btn {
     flex: 0 0 auto !important;
     width: auto !important;
-    min-width: 96px !important;
-    padding: 7px 14px !important;
-    font-size: 12.5px !important;
+    min-width: 84px !important;
+    padding: 7px 11px !important;
+    font-size: 12px !important;
   }
   .modal-backdrop {
     padding: 8px 16px !important;
