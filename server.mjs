@@ -246,12 +246,13 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
         rm.lastActivity = Date.now();
         return sendJson(200, {
           roomId: rm.id,
+          roomTitle: rm.roomTitle || `${rm.players[0]?.name || '호스트'}의 방`,
           status: rm.status,
           slot,
           maxPlayers: rm.maxPlayers,
-          inviteCode: slot === 0 ? rm.inviteCode : undefined,
+          inviteCode: rm.inviteCode,
           approvalCode: slot === 0 && rm.status === 'WAITING_APPROVAL' ? rm.approvalCode : undefined,
-          players: rm.players.map((p) => ({ name: p.name, charKey: p.charKey })),
+          players: rm.players.map((p, idx) => ({ slot: idx, name: p.name, charKey: p.charKey })),
           snapshot: rm.sim ? rm.sim.snapshot() : null,
         });
       }

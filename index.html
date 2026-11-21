@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Jua&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="./styles/main.css?v=67" />
+  <link rel="stylesheet" href="./styles/main.css?v=68" />
 </head>
 <body>
   <!-- 0. 최초 구동 시 구글 전면 광고(Interstitial Ad) 게이트 -->
@@ -473,6 +473,36 @@
     </div>
   </div>
 
+  <!-- 5-2. 상용 3D 파티 대기방 모달 -->
+  <div id="partyRoomModal" class="modal-backdrop hidden" role="dialog" aria-label="파티 대기방">
+    <div class="modal-card party-room-card">
+      <div class="party-room-head">
+        <div>
+          <p class="modal-kicker">3D PARTY WAITING ROOM</p>
+          <h2 id="partyRoomTitle" class="party-room-title">볼탱이 파티방</h2>
+        </div>
+        <span id="partyRoomMode" class="party-mode-pill">1:1 · 1/2명</span>
+      </div>
+
+      <div class="party-code-bar">
+        <div class="party-code-meta">
+          <span class="party-code-label">초대 코드</span>
+          <strong id="partyRoomCode" class="party-code-value">------</strong>
+        </div>
+        <button id="copyPartyCodeBtn" type="button" class="party-copy-btn">📋 코드 복사</button>
+      </div>
+
+      <div id="partySlotsGrid" class="party-slots-grid"></div>
+
+      <p id="partyRoomHint" class="party-room-hint">참가자가 모두 입장하면 자동으로 대전이 시작됩니다!</p>
+
+      <div class="party-room-actions">
+        <button id="partyApproveBtn" type="button" class="primary-fire-btn hidden">🔥 대전 시작!</button>
+        <button id="leavePartyRoomBtn" type="button" class="party-leave-btn">🚪 방 나가기</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 6. 보상형 동영상 광고(Rewarded Ad) 오버레이 -->
   <div id="rewardAdOverlay" class="interstitial-ad-backdrop hidden" role="dialog" aria-label="보상형 광고">
     <div class="interstitial-ad-topbar">
@@ -506,6 +536,6 @@
   </aside>
 
   <script src="./vendor/matter.min.js"></script>
-  <script type="module" src="./src/main.js?v=47"></script>
+  <script type="module" src="./src/main.js?v=48"></script>
 </body>
 </html>

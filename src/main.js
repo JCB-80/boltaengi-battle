@@ -157,6 +157,16 @@ const ui = {
   schoolTopBanner: document.getElementById('schoolTopBanner'),
   lbScopeBtns: document.querySelectorAll('.lb-scope-btn'),
   leaderboardList: document.getElementById('leaderboardList'),
+
+  partyRoomModal: document.getElementById('partyRoomModal'),
+  partyRoomTitle: document.getElementById('partyRoomTitle'),
+  partyRoomMode: document.getElementById('partyRoomMode'),
+  partyRoomCode: document.getElementById('partyRoomCode'),
+  copyPartyCodeBtn: document.getElementById('copyPartyCodeBtn'),
+  partySlotsGrid: document.getElementById('partySlotsGrid'),
+  partyRoomHint: document.getElementById('partyRoomHint'),
+  partyApproveBtn: document.getElementById('partyApproveBtn'),
+  leavePartyRoomBtn: document.getElementById('leavePartyRoomBtn'),
 };
 
 const heldKeys = new Set();
@@ -1195,6 +1205,7 @@ function launchMatchSpec(spec) {
   onlineClient.clearSession();
   engine.isRemoteMatch = false;
   ui.onlineRoomStatusBox?.classList.add('hidden');
+  ui.partyRoomModal?.classList.add('hidden');
   activeCustomMatch = spec;
   window.AndroidBridge?.setOrientation?.('landscape');
   ui.lobbyScreen.classList.add('hidden');
@@ -1215,6 +1226,7 @@ function restartWithCurrentOptions() {
   onlineClient.clearSession();
   engine.isRemoteMatch = false;
   ui.onlineRoomStatusBox?.classList.add('hidden');
+  ui.partyRoomModal?.classList.add('hidden');
   if (ui.rewardAdBtn) {
     ui.rewardAdBtn.disabled = false;
     ui.rewardAdBtn.textContent = '📺 광고 보고 +50 XP';
@@ -1274,6 +1286,7 @@ function returnToLobby() {
   engine.projectiles = [];
   ui.gameOverModal?.classList.add('hidden');
   ui.onlineRoomStatusBox?.classList.add('hidden');
+  ui.partyRoomModal?.classList.add('hidden');
   window.AndroidBridge?.setOrientation?.('portrait');
   ui.gameScreen.classList.add('hidden');
   ui.lobbyScreen.classList.remove('hidden');
@@ -1543,6 +1556,126 @@ initBannerAd(ui.googleAdContainer);
 
 // --- 실시간 온라인 방 대전 (/api/battle/*) 바인딩 & 재접속 ---
 let onlineMatchEntered = false;
+let lastPartyModalSig = '';
+
+function escapePartyHtml(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function renderPartyRoomModal(res) {
+  if (!ui.partyRoomModal || !res) return;
+  const maxP = Math.max(2, Number(res.maxPlayers) || 2);
+  const players = Array.isArray(res.players) ? res.players : [];
+  const code = String(res.inviteCode || onlineClient.inviteCode || '------').toUpperCase();
+  const title = (res.roomTitle || '').trim() || (players[0]?.name ? `${players[0].name}의 파티방` : '볼탱이 파티방');
+  const isHost = onlineClient.slot === 0;
+  const isApproval = res.status === 'WAITING_APPROVAL';
+
+  ui.partyRoomModal.classList.remove('hidden');
+
+  const sig = JSON.stringify({
+    status: res.status,
+    title,
+    code,
+    maxP,
+    slot: onlineClient.slot,
+    players: players.map((p) => [p.slot, p.name, p.charKey]),
+  });
+  if (sig === lastPartyModalSig) return;
+  lastPartyModalSig = sig;
+
+  if (ui.partyRoomTitle) ui.partyRoomTitle.textContent = title;
+  if (ui.partyRoomMode) {
+    const modeLabel = maxP === 3 ? '1:1:1 삼파전' : '1:1 대전';
+    ui.partyRoomMode.textContent = `${modeLabel} · ${players.length}/${maxP}명`;
+  }
+  if (ui.partyRoomCode) ui.partyRoomCode.textContent = code;
+
+  if (ui.partySlotsGrid) {
+    const cards = [];
+    for (let i = 0; i < maxP; i++) {
+      const p = players[i];
+      if (p) {
+        const isMe = i === onlineClient.slot;
+        const safeName = escapePartyHtml(p.name || `플레이어 ${i + 1}`);
+        const safeChar = encodeURIComponent(p.charKey || 'M01_MOCHI');
+        const badgeClass = i === 0 ? 'host' : 'ready';
+        const badgeText = i === 0 ? '👑 방장' : '✅ 입장 완료';
+        cards.push(
+          `<div class="party-slot-card joined${isMe ? ' me' : ''}">` +
+            `<div class="party-slot-avatar"><img src="./assets/chars/${safeChar}.png" alt="${safeName}" /></div>` +
+            `<div class="party-slot-name">${safeName}${isMe ? ' (나)' : ''}</div>` +
+            `<span class="party-slot-badge ${badgeClass}">${badgeText}</span>` +
+          `</div>`
+        );
+      } else {
+        cards.push(
+          `<div class="party-slot-card empty">` +
+            `<div class="party-slot-avatar">⏳</div>` +
+            `<div class="party-slot-name">참가자 대기 중...</div>` +
+            `<span class="party-slot-badge waiting">빈 슬롯 ${i + 1}</span>` +
+          `</div>`
+        );
+      }
+    }
+    ui.partySlotsGrid.innerHTML = cards.join('');
+  }
+
+  if (ui.partyRoomHint) {
+    if (isApproval) {
+      ui.partyRoomHint.textContent = isHost
+        ? '🔔 참가자가 준비되었습니다! 아래 [🔥 대전 시작!]을 눌러 시작하세요.'
+        : '방장의 대전 시작 승인을 기다리고 있어요...';
+    } else {
+      const remain = Math.max(0, maxP - players.length);
+      ui.partyRoomHint.textContent = remain > 0
+        ? `앞으로 ${remain}명만 더 들어오면 자동으로 대전이 시작됩니다!`
+        : '모든 참가자가 모였습니다! 곧 대전이 시작됩니다...';
+    }
+  }
+
+  if (ui.partyApproveBtn) {
+    ui.partyApproveBtn.classList.toggle('hidden', !(isApproval && isHost));
+  }
+}
+
+ui.copyPartyCodeBtn?.addEventListener('click', async () => {
+  const code = (ui.partyRoomCode?.textContent || '').trim();
+  if (!code || code === '------') return;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(code);
+    } else {
+      const ta = document.createElement('textarea');
+      ta.value = code;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+    ui.copyPartyCodeBtn.textContent = '✅ 복사됨!';
+    setTimeout(() => {
+      if (ui.copyPartyCodeBtn) ui.copyPartyCodeBtn.textContent = '📋 코드 복사';
+    }, 1800);
+  } catch {
+    ui.copyPartyCodeBtn.textContent = `코드: ${code}`;
+  }
+});
+
+ui.partyApproveBtn?.addEventListener('click', () => {
+  ui.approveOnlineRoomBtn?.click();
+});
+
+ui.leavePartyRoomBtn?.addEventListener('click', () => {
+  ui.cancelOnlineRoomBtn?.click();
+});
 
 function handleOnlineRoomState(res) {
   if (!res) return;
@@ -1555,6 +1688,7 @@ function handleOnlineRoomState(res) {
         ? `방 코드 [${res.inviteCode}] — 참가자 입장 대기 중 (${joinedCount}/${maxP}명)...`
         : `입장 완료! 다른 참가자 대기 중 (${joinedCount}/${maxP}명)...`;
     ui.approveOnlineRoomBtn?.classList.add('hidden');
+    renderPartyRoomModal(res);
     return;
   }
   if (res.status === 'WAITING_APPROVAL') {
@@ -1570,9 +1704,12 @@ function handleOnlineRoomState(res) {
       ui.onlineRoomStatusText.textContent = `방장 시작 승인 대기 중... (${joinedCount}/${maxP}명)`;
       ui.approveOnlineRoomBtn?.classList.add('hidden');
     }
+    renderPartyRoomModal(res);
     return;
   }
   if (res.status === 'ACTIVE' && res.snapshot) {
+    lastPartyModalSig = '';
+    ui.partyRoomModal?.classList.add('hidden');
     engine.isRemoteMatch = true;
     if (!onlineMatchEntered) {
       onlineMatchEntered = true;
@@ -1589,30 +1726,41 @@ function handleOnlineRoomState(res) {
 
 ui.cancelOnlineRoomBtn?.addEventListener('click', () => {
   onlineMatchEntered = false;
+  lastPartyModalSig = '';
   onlineClient.clearSession();
   engine.isRemoteMatch = false;
   ui.onlineRoomStatusBox?.classList.add('hidden');
+  ui.partyRoomModal?.classList.add('hidden');
   lastLanRoomsJson = '';
   refreshLanOpenRooms();
 });
 
 ui.createOnlineRoomBtn?.addEventListener('click', async () => {
   onlineMatchEntered = false;
+  lastPartyModalSig = '';
   const prof = getSafeProfile();
   const roomTitle = (ui.onlineRoomTitleInput?.value || '').trim();
+  const maxPlayers = Number(ui.onlineMaxPlayers?.value || 2);
   try {
     const res = await onlineClient.createRoom({
       mapPreset: ui.mapSelect.value,
       charKey: ui.charSelect.value,
       name: prof.nickname,
       roomTitle,
-      maxPlayers: Number(ui.onlineMaxPlayers?.value || 2),
+      maxPlayers,
       schoolName: prof.schoolName || '',
       className: prof.className || '',
       scope: 'all',
     });
     ui.onlineRoomStatusBox?.classList.remove('hidden');
     ui.onlineRoomStatusText.textContent = `방 생성 완료! 초대 코드: ${res.inviteCode}`;
+    renderPartyRoomModal({
+      status: 'WAITING_GUEST',
+      inviteCode: res.inviteCode,
+      roomTitle: res.roomTitle || roomTitle,
+      maxPlayers: res.maxPlayers || maxPlayers,
+      players: [{ slot: 0, name: prof.nickname, charKey: ui.charSelect.value }],
+    });
     onlineClient.startPolling(handleOnlineRoomState, 65);
   } catch (err) {
     ui.onlineRoomStatusBox?.classList.remove('hidden');
@@ -1622,21 +1770,30 @@ ui.createOnlineRoomBtn?.addEventListener('click', async () => {
 
 ui.createClassOnlineRoomBtn?.addEventListener('click', async () => {
   onlineMatchEntered = false;
+  lastPartyModalSig = '';
   const prof = getSafeProfile();
   const roomTitle = (ui.schoolRoomTitleInput?.value || '').trim();
+  const maxPlayers = Number(ui.schoolOnlineMaxPlayers?.value || 2);
   try {
     const res = await onlineClient.createRoom({
       mapPreset: ui.mapSelect.value,
       charKey: ui.charSelect.value,
       name: prof.nickname,
       roomTitle,
-      maxPlayers: Number(ui.schoolOnlineMaxPlayers?.value || 2),
+      maxPlayers,
       schoolName: prof.schoolName || '',
       className: prof.className || '',
       scope: 'class',
     });
     ui.onlineRoomStatusBox?.classList.remove('hidden');
     ui.onlineRoomStatusText.textContent = `🎓 [${shortSchoolLabel(prof.schoolName)} ${prof.className}] 반 대전 방 생성! 코드: ${res.inviteCode}`;
+    renderPartyRoomModal({
+      status: 'WAITING_GUEST',
+      inviteCode: res.inviteCode,
+      roomTitle: res.roomTitle || roomTitle || `${shortSchoolLabel(prof.schoolName)} ${prof.className} 반 대전`,
+      maxPlayers: res.maxPlayers || maxPlayers,
+      players: [{ slot: 0, name: prof.nickname, charKey: ui.charSelect.value }],
+    });
     onlineClient.startPolling(handleOnlineRoomState, 65);
   } catch (err) {
     ui.onlineRoomStatusBox?.classList.remove('hidden');
@@ -1646,6 +1803,7 @@ ui.createClassOnlineRoomBtn?.addEventListener('click', async () => {
 
 ui.joinOnlineRoomBtn?.addEventListener('click', async () => {
   onlineMatchEntered = false;
+  lastPartyModalSig = '';
   const code = (ui.onlineInviteInput?.value || '').trim().toUpperCase();
   if (!code) return;
   const prof = getSafeProfile();

@@ -777,11 +777,13 @@ export class GameRenderer {
         inGameCheekDy = 1.5 * (cart.aimPower / 100);
       }
 
+      const winHop = phase === 'GAME_OVER' && cart.alive ? Math.abs(Math.sin(frameCount * 0.22)) * 9 : 0;
+      const hurtWobble = cart.mood === 'hurt' ? Math.sin(frameCount * 1.8) * 2.2 : 0;
       drawWarpedSprite3D(
         ctx,
         sprite3d.img,
-        -29,
-        -56 + idleBob * 0.5 - walkHop,
+        -29 + hurtWobble,
+        -56 + idleBob * 0.5 - walkHop - winHop,
         58,
         -19,
         headY + 4,
@@ -791,6 +793,34 @@ export class GameRenderer {
         14
       );
       ctx.restore();
+
+      // 상용 캐릭터 상태 이펙트: 강하게 당길 때 식은땀 + 피격 시 어지럼 별 + 승리 반짝이
+      if (isHardPull) {
+        const dropY = -44 + ((frameCount * 0.6) % 7);
+        ctx.fillStyle = '#38BDF8';
+        ctx.strokeStyle = '#0369A1';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(14, dropY - 5);
+        ctx.quadraticCurveTo(18, dropY + 1, 14, dropY + 4);
+        ctx.quadraticCurveTo(10, dropY + 1, 14, dropY - 5);
+        ctx.fill();
+        ctx.stroke();
+      }
+      if (cart.mood === 'hurt') {
+        for (let s = 0; s < 3; s++) {
+          const ang = frameCount * 0.16 + (s * Math.PI * 2) / 3;
+          const sx = Math.cos(ang) * 18;
+          const sy = -54 + Math.sin(ang) * 5;
+          ctx.fillStyle = '#FDE047';
+          ctx.strokeStyle = '#B45309';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.arc(sx, sy, 3.2, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        }
+      }
     } else {
       // 1) 캐릭터별 고유 꼬리 (카트 없이 직접 서 있는 아기 동물)
     const outfit = cart.spec.outfit;
@@ -1313,15 +1343,16 @@ export class GameRenderer {
       ctx.stroke();
     }
 
-    ctx.font = 'bold 10.5px "Pretendard", "Malgun Gothic", sans-serif';
+    ctx.font = 'bold 11px "Pretendard", "Malgun Gothic", sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillStyle = '#FFFFFF';
-    ctx.strokeStyle = 'rgba(15, 23, 42, 0.88)';
-    ctx.lineWidth = 2.8;
     const shortName = cart.spec?.name || cart.displayName;
     const tag = `${shortName} ${cart.hp}`;
-    ctx.strokeText(tag, 0, barY + 19);
-    ctx.fillText(tag, 0, barY + 19);
+    const tagW = Math.max(46, ctx.measureText(tag).width + 12);
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.76)';
+    this.roundRect(ctx, -tagW / 2, barY + 9, tagW, 15, 7.5);
+    ctx.fill();
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillText(tag, 0, barY + 20);
 
     ctx.restore();
   }
