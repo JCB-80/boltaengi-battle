@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { caseFold } from 'unicode-case-folding';
 
 const DEFAULT_MAX_IDEMPOTENCY_KEYS = 2000;
 
@@ -12,6 +13,18 @@ function sanitizeText(value, maxLen = 40) {
   return String(value || '')
     .trim()
     .slice(0, maxLen);
+}
+
+function cleanNickname(value) {
+  if (typeof value !== 'string') return null;
+  const name = value.normalize('NFKC').trim();
+  if ([...name].length < 2 || [...name].length > 16) return null;
+  if (!/^[\p{L}\p{N}][\p{L}\p{M}\p{N}_ -]*$/u.test(name) || name.includes('  ')) return null;
+  return name;
+}
+
+function nicknameKey(name) {
+  return caseFold(name.normalize('NFKC')).normalize('NFKC');
 }
 
 function computeAccountScore(acc) {
@@ -28,8 +41,8 @@ function makePublicAccount(acc) {
     accountId: acc.accountId,
     userId: acc.userId,
     nickname: acc.nickname,
-    schoolName: acc.schoolName,
-    className: acc.className,
+    provider: acc.provider || null,
+    needsNickname: !acc.provider || !acc.nickname,
     xp: acc.xp,
     wins: acc.wins,
     matches: acc.matches,
@@ -58,7 +71,7 @@ export class BattlePersistentStore {
     this.maxIdempotencyKeys = options.maxIdempotencyKeys || DEFAULT_MAX_IDEMPOTENCY_KEYS;
 
     this.state = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       accountsById: {},
       tokenToAccountId: {},
       userIdToAccountId: {},
@@ -68,13 +81,21 @@ export class BattlePersistentStore {
     this.recoveredFromBackup = false;
 
     this.#loadFromDisk();
+    if (this.state.schemaVersion === 1) {
+      for (const acc of Object.values(this.state.accountsById)) {
+        delete acc.schoolName;
+        delete acc.className;
+      }
+      this.state.schemaVersion = 2;
+      this.#flushBackupFirst();
+    }
   }
 
   #validatePayload(parsed) {
     return (
       parsed &&
       typeof parsed === 'object' &&
-      parsed.schemaVersion === 1 &&
+      [1, 2].includes(parsed.schemaVersion) &&
       parsed.accountsById &&
       typeof parsed.accountsById === 'object' &&
       parsed.tokenToAccountId &&
@@ -171,9 +192,8 @@ export class BattlePersistentStore {
     fs.renameSync(bakTmpPath, this.bakPath);
   }
 
-  #flushDeletionToDisk() {
-    // Commit the redacted backup first and the primary last. A failure before the
-    // primary rename leaves the account authoritative and permits a safe retry.
+  #flushBackupFirst() {
+    // The primary rename commits the change after its recovery copy is durable.
     const json = JSON.stringify(this.state, null, 2);
     const backupTmp = `${this.bakPath}.tmp`;
     for (const tempPath of [backupTmp, this.tmpPath]) {
@@ -207,73 +227,102 @@ export class BattlePersistentStore {
     }
   }
 
-  registerOrLoginAccount({ userId, nickname, schoolName = '', className = '', accountToken = '' }) {
-    const cleanUserId = sanitizeText(userId, 48);
-    if (!cleanUserId) {
-      throw new StoreError(400, 'INVALID_USER_ID', 'userId가 필요합니다.');
-    }
-
-    const now = Date.now();
-    if (['__proto__', 'constructor', 'prototype'].includes(cleanUserId)) {
-      throw new StoreError(400, 'INVALID_USER_ID', '사용할 수 없는 userId입니다.');
-    }
-    const existingAccountId = Object.hasOwn(this.state.userIdToAccountId, cleanUserId)
-      ? this.state.userIdToAccountId[cleanUserId] : null;
-    if (existingAccountId && this.state.accountsById[existingAccountId]) {
-      const acc = this.state.accountsById[existingAccountId];
-      // 토큰을 공개 ID만으로 발급하던 이전 버전의 토큰은 이미 노출됐을 수 있다.
-      // 해당 계정은 보존하되 별도의 소유권 검증 절차 전에는 자동 복구하지 않는다.
-      if (acc.credentialVersion !== 2) {
-        throw new StoreError(403, 'ACCOUNT_RECOVERY_REQUIRED', '기존 계정은 별도 소유권 확인이 필요합니다.');
+  #persistIdentity(next) {
+    const { accountId, userId, accountToken } = next;
+    const previous = this.state.accountsById[accountId];
+    this.state.accountsById[accountId] = next;
+    this.state.userIdToAccountId[userId] = accountId;
+    this.state.tokenToAccountId[accountToken] = accountId;
+    try {
+      this.#flushBackupFirst();
+    } catch (err) {
+      if (previous) this.state.accountsById[accountId] = previous;
+      else {
+        delete this.state.accountsById[accountId];
+        delete this.state.userIdToAccountId[userId];
+        delete this.state.tokenToAccountId[accountToken];
       }
-      this.authenticateAccount(accountToken, acc.accountId);
-      if (nickname) acc.nickname = sanitizeText(nickname, 24) || acc.nickname;
-      if (schoolName) acc.schoolName = sanitizeText(schoolName, 32);
-      if (className) acc.className = sanitizeText(className, 24);
-      acc.updatedAt = now;
-      this.#flushToDisk();
-      return {
-        created: false,
-        accountToken: acc.accountToken,
-        account: makePublicAccount(acc),
-      };
+      throw err;
     }
+  }
 
-    // A delayed authenticated sync after deletion must not recreate the account.
-    if (accountToken) {
-      throw new StoreError(401, 'INVALID_TOKEN', '유효하지 않은 계정 토큰입니다.');
+  #nicknameInUse(nickname, ownId) {
+    const key = nicknameKey(nickname);
+    return Object.values(this.state.accountsById).some((acc) =>
+      acc.accountId !== ownId && acc.credentialVersion === 2 && cleanNickname(acc.nickname)
+      && nicknameKey(acc.nickname.trim()) === key
+    );
+  }
+
+  #checkNickname(value, ownId) {
+    const nickname = cleanNickname(value);
+    if (!nickname) throw new StoreError(400, 'INVALID_NICKNAME', '닉네임 길이와 사용 가능한 문자를 확인해 주세요.');
+    if (this.#nicknameInUse(nickname, ownId)) throw new StoreError(409, 'NICKNAME_TAKEN', '이미 사용 중인 닉네임입니다.');
+    return nickname;
+  }
+
+  findAccountByNickname(value) {
+    const nickname = cleanNickname(value);
+    if (!nickname) throw new StoreError(400, 'INVALID_NICKNAME', '닉네임을 확인해 주세요.');
+    const key = nicknameKey(nickname);
+    const account = Object.values(this.state.accountsById).find((acc) =>
+      acc.provider && acc.nickname && nicknameKey(acc.nickname) === key
+    );
+    return account ? makePublicAccount(account) : null;
+  }
+
+  setNickname(accountToken, value) {
+    const owner = this.authenticateAccount(accountToken);
+    if (!owner.provider) throw new StoreError(403, 'SOCIAL_LOGIN_REQUIRED', '소셜 로그인이 필요합니다.');
+    const acc = this.state.accountsById[owner.accountId];
+    const next = { ...acc, nickname: this.#checkNickname(value, acc.accountId), updatedAt: Date.now() };
+    this.#persistIdentity(next);
+    return makePublicAccount(next);
+  }
+
+  // Invoked only after the OAuth handler verifies the issuer and its stable subject.
+  loginWithSocialIdentity({ provider, subject, nickname, accountToken }) {
+    if (!['google', 'kakao', 'naver', 'apple'].includes(provider) || typeof subject !== 'string' ||
+        !subject.trim() || subject.length > 512) {
+      throw new StoreError(400, 'INVALID_IDENTITY', '소셜 계정을 확인할 수 없습니다.');
     }
-
-    const accountId = `acct_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
-    const newAccountToken = `btl2_${crypto.randomBytes(24).toString('hex')}`;
-    const acc = {
-      accountId,
-      userId: cleanUserId,
-      nickname: sanitizeText(nickname, 24) || cleanUserId,
-      schoolName: sanitizeText(schoolName, 32),
-      className: sanitizeText(className, 24),
-      xp: 0,
-      wins: 0,
-      matches: 0,
-      score: 0,
-      version: 1,
-      migratedLocalAt: null,
-      accountToken: newAccountToken,
-      credentialVersion: 2,
-      createdAt: now,
-      updatedAt: now,
+    const linked = Object.values(this.state.accountsById).find((acc) =>
+      acc.provider === provider && acc.providerSubject === subject
+    );
+    const owner = accountToken ? this.authenticateAccount(accountToken) : null;
+    const old = owner ? this.state.accountsById[owner.accountId] : null;
+    if (old && ((linked && old !== linked) || (old.provider && old !== linked))) {
+      throw new StoreError(409, 'ACCOUNT_LINK_CONFLICT', '이미 다른 소셜 계정에 연결되어 있습니다.');
+    }
+    if (linked && (linked.nickname || !nickname)) {
+      return { created: false, accountToken: linked.accountToken, account: makePublicAccount(linked) };
+    }
+    if (old || linked) {
+      const next = { ...(linked || old), provider, providerSubject: subject, updatedAt: Date.now() };
+      const retained = cleanNickname(next.nickname);
+      if (nickname) next.nickname = this.#checkNickname(nickname, next.accountId);
+      else next.nickname = retained && !this.#nicknameInUse(retained, next.accountId) ? retained : '';
+      this.#persistIdentity(next);
+      return { created: false, accountToken: next.accountToken, account: makePublicAccount(next) };
+    }
+    const displayName = nickname ? this.#checkNickname(nickname) : '';
+    const id = `acct_${crypto.randomUUID()}`;
+    const token = `btl2_${crypto.randomBytes(24).toString('hex')}`;
+    const now = Date.now();
+    const fresh = {
+      accountId: id, userId: id, nickname: displayName, provider, providerSubject: subject,
+      xp: 0, wins: 0, matches: 0, score: 0, version: 1, migratedLocalAt: null,
+      accountToken: token, credentialVersion: 2, createdAt: now, updatedAt: now,
     };
+    this.#persistIdentity(fresh);
+    return { created: true, accountToken: token, account: makePublicAccount(fresh) };
+  }
 
-    this.state.accountsById[accountId] = acc;
-    this.state.userIdToAccountId[cleanUserId] = accountId;
-    this.state.tokenToAccountId[newAccountToken] = accountId;
-    this.#flushToDisk();
-
-    return {
-      created: true,
-      accountToken: newAccountToken,
-      account: makePublicAccount(acc),
-    };
+  registerOrLoginAccount({ userId, accountToken }) {
+    if (!accountToken) throw new StoreError(403, 'SOCIAL_LOGIN_REQUIRED', '소셜 로그인이 필요합니다.');
+    const account = this.authenticateAccount(accountToken);
+    if (account.userId !== userId) throw new StoreError(403, 'FORBIDDEN_ACCOUNT', '다른 계정입니다.');
+    return { created: false, accountToken, account };
   }
 
   authenticateAccount(accountToken, expectedAccountId = null) {
@@ -306,7 +355,7 @@ export class BattlePersistentStore {
     this.state.processedKeys = this.state.processedKeys.filter(entry => entry.accountId !== account.accountId);
     this.#rebuildIndex();
     try {
-      this.#flushDeletionToDisk();
+      this.#flushBackupFirst();
     } catch (err) {
       this.state = previousState;
       this.#rebuildIndex();
@@ -444,11 +493,10 @@ export class BattlePersistentStore {
 
   getLeaderboard(options = 20) {
     const opts = typeof options === 'number' ? { limit: options } : options || {};
-    const limit = Math.max(1, Number(opts.limit) || 20);
-    const scope = opts.scope === 'school' || opts.scope === 'class' ? opts.scope : 'all';
-    const schoolName = String(opts.schoolName || '').trim();
-    const className = String(opts.className || '').trim();
-
+    const limit = Math.max(1, Math.trunc(Number(opts.limit)) || 20);
+    const text = (opts.q || '').trim();
+    if ([...text].length > 64) throw new StoreError(400, 'SEARCH_QUERY_TOO_LONG', '검색어가 너무 깁니다.');
+    const query = nicknameKey(text);
     const sortByRank = (a, b) => {
       if (b.score !== a.score) return b.score - a.score;
       if (b.winRate !== a.winRate) return b.winRate - a.winRate;
@@ -474,17 +522,14 @@ export class BattlePersistentStore {
 
     // Legacy tokens and historical scores could have been forged via the old API.
     // Keep the data for recovery, but do not present it as verified competition.
-    const allAccounts = Object.values(this.state.accountsById).filter(acc => acc.credentialVersion === 2).map((acc) => {
+    const allAccounts = Object.values(this.state.accountsById).filter(acc => acc.credentialVersion === 2 && acc.provider && acc.nickname).map((acc) => {
       const wins = Math.max(0, Number(acc.wins) || 0);
       const matches = Math.max(0, Number(acc.matches) || 0);
       const winRate = matches > 0 ? Math.round((wins / matches) * 100) : 0;
       const xp = Math.max(0, Number(acc.xp) || 0);
       const rk = resolveRank(xp);
       return {
-        userId: acc.userId,
         nickname: acc.nickname,
-        schoolName: acc.schoolName || '',
-        className: acc.className || '',
         wins,
         matches,
         winRate,
@@ -496,33 +541,28 @@ export class BattlePersistentStore {
       };
     });
 
-    const filtered = allAccounts.filter((item) => {
-      if (scope === 'school' && schoolName) return item.schoolName === schoolName;
-      if (scope === 'class' && schoolName && className) {
-        return item.schoolName === schoolName && item.className === className;
+    allAccounts.sort(sortByRank);
+    const leaderboard = [];
+    let exactMatch = null;
+    for (const [index, item] of allAccounts.entries()) {
+      if (query) {
+        const key = nicknameKey(item.nickname);
+        if (key === query) {
+          exactMatch = { rank: index + 1, ...item };
+          if (opts.exact) break;
+          continue;
+        }
+        if (opts.exact || !key.includes(query)) continue;
       }
-      return true;
-    });
-
-    filtered.sort(sortByRank);
-    const leaderboard = filtered.slice(0, limit).map((item, idx) => ({
-      rank: idx + 1,
-      ...item,
-    }));
-
-    const schoolPeers = schoolName ? allAccounts.filter((item) => item.schoolName === schoolName) : [];
-    schoolPeers.sort(sortByRank);
-    const schoolTop = schoolPeers[0] ? { rank: 1, ...schoolPeers[0] } : null;
-
-    const classPeers =
-      schoolName && className
-        ? allAccounts.filter((item) => item.schoolName === schoolName && item.className === className)
-        : [];
-    classPeers.sort(sortByRank);
-    const classTop = classPeers[0] ? { rank: 1, ...classPeers[0] } : null;
-
+      if (leaderboard.length < limit) leaderboard.push({ rank: index + 1, ...item });
+      if (leaderboard.length >= limit && (!query || exactMatch)) break;
+    }
+    if (exactMatch) {
+      leaderboard.unshift(exactMatch);
+      if (leaderboard.length > limit) leaderboard.pop();
+    }
     if (typeof options === 'number') return leaderboard;
-    return { leaderboard, schoolTop, classTop };
+    return { leaderboard };
   }
 
   getStats() {

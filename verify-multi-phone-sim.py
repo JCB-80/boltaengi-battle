@@ -1,3 +1,6 @@
+"""Historical school-lobby device scenarios. Current HUD and online checks live in
+tests/verify-hud-browser.py and tests/verify-online-match-browser.py.
+"""
 import time
 from playwright.sync_api import sync_playwright
 

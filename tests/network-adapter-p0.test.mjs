@@ -56,15 +56,19 @@ test('a delayed account response cannot replace the most recently selected ident
   globalThis.localStorage = memoryStorage();
   globalThis.sessionStorage = memoryStorage();
   const oldFetch = globalThis.fetch;
+  for (const id of ['alice', 'bob']) {
+    const auth = { userId: id, accountId: id[0], accountToken: 'token_' + id[0] };
+    localStorage.setItem('boltaengi_account_auth_v2:' + id, JSON.stringify(auth));
+  }
   const pending = new Map();
-  globalThis.fetch = async (_url, options) => new Promise((resolve) => pending.set(JSON.parse(options.body).userId, resolve));
+  globalThis.fetch = async (_url, options) => new Promise((resolve) => pending.set(options.headers.Authorization, resolve));
   t.after(() => { globalThis.fetch = oldFetch; delete globalThis.localStorage; delete globalThis.sessionStorage; });
   const client = new OnlineBattleClient();
   const first = client.syncAccount({ userId: 'alice' });
   const second = client.syncAccount({ userId: 'bob' });
-  pending.get('bob')({ ok: true, json: async () => ({ account: { userId: 'bob', accountId: 'b' }, accountToken: 'token_b' }) });
+  pending.get('Bearer token_b')({ ok: true, json: async () => ({ account: { userId: 'bob', accountId: 'b' }, accountToken: 'token_b' }) });
   assert.equal((await second).userId, 'bob');
-  pending.get('alice')({ ok: true, json: async () => ({ account: { userId: 'alice', accountId: 'a' }, accountToken: 'token_a' }) });
+  pending.get('Bearer token_a')({ ok: true, json: async () => ({ account: { userId: 'alice', accountId: 'a' }, accountToken: 'token_a' }) });
   assert.equal(await first, null);
   assert.equal(client.accountAuth.userId, 'bob');
   assert.equal(client.accountAuth.accountToken, 'token_b');
@@ -109,12 +113,12 @@ test('a failed switch to another profile does not attach the previous account to
   const calls = [];
   globalThis.fetch = async (url, options) => {
     calls.push({ url, options });
-    if (url.endsWith('/accounts')) return { ok: false, status: 403, json: async () => ({ error: 'USER_ID_TAKEN' }) };
     return { ok: true, json: async () => ({ roomId: 'rm_test', memberToken: 'room_token', slot: 0 }) };
   };
   t.after(() => { globalThis.fetch = oldFetch; delete globalThis.localStorage; delete globalThis.sessionStorage; });
   const client = new OnlineBattleClient();
-  await assert.rejects(client.syncAccount({ userId: 'bob' }), /USER_ID_TAKEN/);
+  assert.equal(await client.syncAccount({ userId: 'bob' }), null);
+  assert.equal(calls.length, 0);
   assert.equal(client.getActiveAccountAuth(), null);
   await client.createRoom({ name: 'Bob' });
   assert.equal(JSON.parse(calls.at(-1).options.body).accountToken, undefined);

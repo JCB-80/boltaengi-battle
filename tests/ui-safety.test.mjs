@@ -1,37 +1,40 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import vm from 'node:vm';
+import { renderOpenRooms, renderRankings } from '../src/lobbyLists.js';
 
-const source = fs.readFileSync(process.env.BATTLE_UI_SOURCE || new URL('../src/main.js', import.meta.url), 'utf8');
-const between = (start, end) => {
-  const i = source.indexOf(start), j = source.indexOf(end, i);
-  assert.ok(i >= 0 && j > i, `missing source section: ${start}`);
-  return source.slice(i, j);
-};
-const escapeFunction = between('function escapePartyHtml(str) {', '\nfunction renderPartyRoomModal');
-const roomFunction = between('let lastLanRoomsJson =', '\nrefreshLanOpenRooms();');
-const rankingFunction = between('let lastLeaderboardJson =', '\nrefreshLeaderboard(true);');
-const attack = '\"><img src=x onerror=alert(1)>&\'';
-function box() { return { innerHTML: '', textContent: '', classList: { contains: () => false }, querySelectorAll: () => [] }; }
-function harness(data) {
-  const ui = { lanOpenRoomsList: box(), schoolOpenRoomsList: box(), leaderboardList: box(), schoolTopBanner: box(), lobbyScreen: box() };
-  const context = { ui, onlineClient: {}, fetch: async () => ({ ok: true, json: async () => data }), loadUserProfile: () => null, shortSchoolLabel: x => x, URLSearchParams, currentLbScope: 'all', console };
-  vm.createContext(context);
-  vm.runInContext(escapeFunction + '\n' + roomFunction + '\n' + rankingFunction, context);
-  return context;
-}
-function assertEscaped(html) {
-  assert.ok(!html.includes(attack));
-  assert.ok(!html.includes('<img src=x'));
-  assert.match(html, /&quot;&gt;&lt;img src=x onerror=alert\(1\)&gt;&amp;&#39;/);
+function element(tagName) {
+  return {
+    tagName,
+    children: [],
+    classList: { toggle() {} },
+    append(...children) { this.children.push(...children); },
+    replaceChildren() { this.children = []; },
+    addEventListener(event, handler) { this[event] = handler; },
+    setAttribute(name, value) { this[name] = value; },
+    set innerHTML(_) { throw new Error('Use text nodes for player-controlled labels'); },
+  };
 }
 
-test('room and leaderboard content and attributes escape attacker-controlled text', async () => {
-  const ctx = harness({ rooms: [{ roomId:'r', roomTitle: attack, hostName: attack, inviteCode: attack, schoolName: attack, className: attack, scope:'class', playersCount: 1, maxPlayers:2 }], leaderboard: [{ rank: 4, userId: attack, nickname: attack, score: attack, matches:1, wins:1, winRate:100 }] });
-  await vm.runInContext('refreshLanOpenRooms()', ctx);
-  await vm.runInContext('refreshLeaderboard(true)', ctx);
-  assertEscaped(ctx.ui.lanOpenRoomsList.innerHTML);
-  assertEscaped(ctx.ui.schoolOpenRoomsList.innerHTML);
-  assertEscaped(ctx.ui.leaderboardList.innerHTML);
+test('room and ranking labels render as text and buttons use the room code or nickname', (t) => {
+  globalThis.document = { createElement: element };
+  t.after(() => { delete globalThis.document; });
+  const rooms = element('div');
+  const ranking = element('div');
+  const nickname = '별콩';
+  const roomTitle = '둘이서 <별 & 달>';
+  const joins = [], invites = [];
+  renderOpenRooms(rooms, [{ roomTitle, hostName: nickname, inviteCode: '01A2BC', playersCount: 1, maxPlayers: 2 }], code => joins.push(code));
+  renderRankings(ranking, [{ nickname, userId: 'private-account', rank: 2, matches: 3, wins: 2, score: 210, winRate: 67 }], '달콩', nick => invites.push(nick));
+
+  const [roomBody, join] = rooms.children[0].children;
+  assert.equal(roomBody.children[0].textContent, roomTitle);
+  assert.equal(roomBody.children[1].textContent, '별콩 · 1/2명');
+  const [rankBody, invite] = ranking.children[0].children;
+  assert.equal(rankBody.children[0].textContent, '2위 · 별콩');
+  assert.match(rankBody.children[1].textContent, /210점 · 3전 2승/);
+  assert.equal(invite['aria-label'], '별콩님 초대');
+  join.click();
+  invite.click();
+  assert.deepEqual(joins, ['01A2BC']);
+  assert.deepEqual(invites, [nickname]);
 });

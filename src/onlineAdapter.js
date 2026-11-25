@@ -7,7 +7,7 @@ const ACCOUNT_KEY = 'boltaengi_account_auth_v1';
 const ACCOUNT_KEY_PREFIX = 'boltaengi_account_auth_v2:';
 
 function knownRoomScope(scope) {
-  return ['all', 'class', 'school'].includes(scope) ? scope : null;
+  return ['all', 'invite', 'class', 'school'].includes(scope) ? scope : null;
 }
 
 export class OnlineBattleClient {
@@ -24,7 +24,6 @@ export class OnlineBattleClient {
     this.accountAuth = this._loadAccountAuth();
     this._accountSyncGeneration = 0;
     this._activeProfileUserId = null;
-    this._accountEpochs = new Map();
   }
 
   _loadAccountAuth() {
@@ -61,40 +60,34 @@ export class OnlineBattleClient {
     }
   }
 
+  activateSocialAccount({ account, accountToken }) {
+    if (!account?.provider || !account.userId || !accountToken) throw new Error('UNAUTHORIZED');
+    this._accountSyncGeneration++;
+    this._activeProfileUserId = account.userId;
+    this._saveAccountAuth({ userId: account.userId, accountId: account.accountId, accountToken });
+  }
+
   async syncAccount(profile) {
-    if (!profile?.userId) return null;
+    const userId = profile?.userId;
+    if (!userId) return null;
     const generation = ++this._accountSyncGeneration;
-    this._activeProfileUserId = profile.userId;
-    const epoch = this._accountEpochs.get(profile.userId) || 0;
-    const headers = { 'Content-Type': 'application/json' };
-    const savedAuth = this._savedAccountFor(profile.userId);
-    if (savedAuth?.accountToken) {
-      headers.Authorization = `Bearer ${savedAuth.accountToken}`;
-    }
-    const response = await fetch('/api/battle/accounts', {
-      method: 'POST', headers,
-      body: JSON.stringify({
-        userId: profile.userId,
-        nickname: profile.nickname,
-        schoolName: profile.schoolName,
-        className: profile.className,
-      }),
-    });
-    const res = await response.json();
-    const isCurrent = generation === this._accountSyncGeneration;
-    // Keep credentials from successful delayed registration, but never make
-    // an outdated profile active or restore credentials after its deletion.
-    if (response.ok && res?.account && res?.accountToken &&
-        res.account.userId === profile.userId && (this._accountEpochs.get(profile.userId) || 0) === epoch) {
-      this._saveAccountAuth({
-        userId: res.account.userId,
-        accountId: res.account.accountId,
-        accountToken: res.accountToken,
-      }, isCurrent);
-    }
-    if (!isCurrent) return null;
-    if (!response.ok) throw new Error(res.error || `HTTP ${response.status}`);
-    return res?.account || null;
+    this._activeProfileUserId = userId;
+    const auth = this._savedAccountFor(userId);
+    this.accountAuth = auth;
+    if (!auth?.accountToken) return null;
+    const account = await this.fetchMyAccount();
+    if (generation !== this._accountSyncGeneration || account?.userId !== userId) return null;
+    this._saveAccountAuth(auth);
+    return account;
+  }
+
+  forgetAccount() {
+    const userId = this._activeProfileUserId;
+    this._accountSyncGeneration++;
+    this._activeProfileUserId = null;
+    this.accountAuth = null;
+    if (userId) localStorage.removeItem(ACCOUNT_KEY_PREFIX + encodeURIComponent(userId));
+    if (this._loadAccountAuth()?.userId === userId) localStorage.removeItem(ACCOUNT_KEY);
   }
 
   async fetchMyAccount() {
@@ -119,7 +112,6 @@ export class OnlineBattleClient {
     const auth = this.getActiveAccountAuth();
     if (!auth?.accountToken) throw new Error('UNAUTHORIZED');
     this._accountSyncGeneration++;
-    this._accountEpochs.set(auth.userId, (this._accountEpochs.get(auth.userId) || 0) + 1);
     const response = await fetch('/api/battle/accounts/me', {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${auth.accountToken}` },
@@ -214,16 +206,15 @@ export class OnlineBattleClient {
     }
   }
 
-  async createRoom({ mapPreset, charKey, name, roomTitle = '', maxPlayers = 2, schoolName = '', className = '', scope = 'all' }) {
+  async createRoom({ mapPreset, charKey, name, roomTitle = '', maxPlayers = 2, scope = 'all' }) {
     this.clearSession();
-    const res = await this._post('/api/battle/rooms', {
+    const endpoint = scope === 'invite' ? '/api/battle/rooms/invite' : '/api/battle/rooms';
+    const res = await this._post(endpoint, {
       mapPreset,
       charKey,
       name,
       roomTitle,
       maxPlayers,
-      schoolName,
-      className,
       scope,
       accountToken: this.getActiveAccountAuth()?.accountToken || undefined,
     }, false);

@@ -140,3 +140,22 @@ test('online reward receipt and XP survive refresh, including interruption of th
   first.grantXp(15, '명중');
   assert.equal(engineForTest().playerXp, 215);
 });
+
+test('switching social accounts keeps local XP separate and uses the server total once', t => {
+  const values = new Map([['puffpuff_xp', '45']]);
+  t.mock.method(localStorage, 'getItem', key => values.get(key) ?? null);
+  t.mock.method(localStorage, 'setItem', (key, value) => values.set(key, value));
+  const engine = engineForTest();
+  engine.setProgressOwner('legacy', 35, true);
+  assert.equal(engine.playerXp, 45);
+  engine.grantXp(15);
+  engine.setProgressOwner('new', 0);
+  assert.equal(engine.playerXp, 0);
+  engine.setProgressOwner('new', 120);
+  engine.setProgressOwner('new', 120);
+  assert.equal(engine.playerXp, 120);
+  engine.setProgressOwner('legacy', 35);
+  assert.equal(engine.playerXp, 60);
+  engine.setProgressOwner(null);
+  assert.equal(engine.playerXp, 45);
+});

@@ -7,26 +7,83 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Jua&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="./styles/main.css?v=73" />
+  <link rel="stylesheet" href="./styles/main.css?v=74" />
 </head>
 <body>
   <!-- 1. 게임 진입 전 로비 화면 (모드 · 캐릭터 · 지형 · AI 난이도 설정) -->
   <div id="lobbyScreen" class="lobby-screen">
     <div class="lobby-card">
       <div class="lobby-header">
-        <span class="brand-badge">CLEAN-IP BAKERY SIEGE</span>
         <h1 class="lobby-title">볼탱이 대전</h1>
-        <p class="lobby-sub">폭신한 빵 위에서 볼살을 당겨 쏘는 말랑 물리 공성전!</p>
+        <p class="lobby-sub">볼을 당겨 쏘는 달콤한 턴제 대전</p>
         <button id="rankBadgeBtn" type="button" class="rank-pill" title="클릭하여 계급 외형 꾸미기 ON/OFF (성능 차이 없음)">
           🌱 Lv.1 견습 발명가 (0/100)
         </button>
         <div class="lobby-profile-bar">
-          <span id="profileSummaryText" class="profile-summary-text">🏫 내 소속 정보를 불러오는 중...</span>
+          <span id="profileSummaryText" class="profile-summary-text">게스트</span>
           <button id="lobbyBgmBtn" type="button" class="profile-edit-btn" title="로비 배경음 켜기/끄기">🎵 BGM</button>
-          <button id="openProfileBtn" type="button" class="profile-edit-btn">✏️ 내 정보</button>
+          <button id="openProfileBtn" type="button" class="profile-edit-btn">가입 · 로그인</button>
           <a href="./privacy.html">개인정보처리방침 · 계정 삭제 안내</a>
         </div>
       </div>
+
+      <nav class="social-hub-tabs" aria-label="로비 메뉴">
+        <button type="button" class="social-tab active" data-hub="classic" aria-pressed="true">로컬 대전</button>
+        <button type="button" class="social-tab" data-hub="friend" aria-pressed="false">친구·온라인 대전</button>
+        <button type="button" class="social-tab" data-hub="ranking" aria-pressed="false">개인 랭킹</button>
+      </nav>
+
+      <div class="lobby-social-hub">
+        <div id="hubPanelFriend" class="social-panel hidden">
+          <form id="nicknameInviteForm" class="nickname-invite-form">
+            <label class="network-field-label" for="inviteNickname">닉네임으로 친구 초대</label>
+            <div class="social-row">
+              <input id="inviteNickname" class="social-input" type="text" placeholder="친구의 게임 닉네임" maxlength="32" required autocomplete="off" />
+              <button id="sendNicknameInviteBtn" type="submit" class="social-mini-btn">1:1 초대</button>
+            </div>
+          </form>
+          <div class="network-room-card">
+            <label class="network-field-label" for="onlineRoomTitleInput">공개 방 만들기</label>
+            <input id="onlineRoomTitleInput" type="text" class="network-title-input" placeholder="방 제목 (선택)" maxlength="28" />
+            <div class="network-action-row">
+              <select id="onlineMaxPlayers" class="network-select" aria-label="방 정원">
+                <option value="2">2인 대전</option>
+                <option value="3">3인 대전</option>
+              </select>
+              <button id="createOnlineRoomBtn" type="button" class="network-create-btn">공개 방 만들기</button>
+            </div>
+            <div class="network-divider"></div>
+            <label class="network-field-label" for="onlineInviteInput">방 코드로 입장</label>
+            <div class="network-action-row">
+              <input id="onlineInviteInput" type="text" class="network-code-input" placeholder="코드 6자리" maxlength="6" autocomplete="off" />
+              <button id="joinOnlineRoomBtn" type="button" class="network-join-btn">입장</button>
+            </div>
+          </div>
+          <div class="lobby-list-panel">
+            <strong>열린 공개 방</strong>
+            <div id="lanOpenRoomsList" class="lobby-list"></div>
+          </div>
+        </div>
+        <div id="onlineRoomStatusBox" class="lobby-list-panel hidden">
+          <span id="onlineRoomStatusText" role="status"></span>
+          <button id="approveOnlineRoomBtn" type="button" class="social-mini-btn hidden">대전 시작</button>
+          <button id="cancelOnlineRoomBtn" type="button" class="social-mini-btn outline hidden">대기방 나가기</button>
+        </div>
+        <section id="leaderboardBox" class="lobby-list-panel ranking-panel hidden" aria-label="개인 랭킹">
+          <div class="ranking-search-head">
+            <label for="rankingQuery">닉네임으로 순위 찾기</label>
+            <button id="showMyRank" type="button" class="social-mini-btn outline hidden">내 순위</button>
+          </div>
+          <div class="social-row">
+            <input id="rankingQuery" class="social-input" type="search" maxlength="32" placeholder="닉네임 전체 또는 일부 입력" autocomplete="off" />
+            <button id="clearRankingQuery" type="button" class="social-mini-btn outline hidden">전체 보기</button>
+          </div>
+          <p id="rankingStatus" class="ranking-status" role="status">전체 상위 20명</p>
+          <div id="leaderboardList" class="lobby-list ranking-list"></div>
+        </section>
+      </div>
+
+      <button id="startMatchBtn" type="button" class="primary-fire-btn lobby-start-btn">🎮 로컬 게임 시작</button>
 
       <div class="lobby-char-picker">
         <div class="char-picker-head">
@@ -45,164 +102,6 @@
           </div>
         </div>
         <input id="charSelect" type="hidden" value="M01_MOCHI" />
-      </div>
-
-      <div class="lobby-social-hub">
-        <div class="social-hub-tabs" role="tablist" aria-label="대전 상대 방식">
-          <button type="button" class="social-tab active" data-hub="classic">🎮 기본 대전</button>
-          <button type="button" class="social-tab" data-hub="friend">🤝 친구 초대</button>
-          <button type="button" class="social-tab" data-hub="school">🏫 반·학교 대전</button>
-          <button type="button" class="social-tab" data-hub="random">🎲 랜덤 만나기</button>
-        </div>
-
-        <!-- 친구 아이디 초대 패널 -->
-        <div id="hubPanelFriend" class="social-panel hidden">
-          <div class="social-row">
-            <input id="friendIdInput" type="text" class="social-input" placeholder="친구 아이디 입력 (예: berry_queen)" maxlength="24" />
-            <button id="addFriendBtn" type="button" class="social-mini-btn">+ 추가</button>
-          </div>
-          <div id="friendQuickChips" class="quick-chips"></div>
-          <div class="social-options-row">
-            <label class="radio-pill">
-              <input type="radio" name="friendPlayStyle" value="local2p" checked />
-              <span>📱 같은 기기 2인 대전</span>
-            </label>
-            <label class="radio-pill">
-              <input type="radio" name="friendPlayStyle" value="ai_duel" />
-              <span>🤖 친구 AI 대결</span>
-            </label>
-            <button id="copyInviteBtn" type="button" class="social-mini-btn outline">🔗 초대링크</button>
-          </div>
-          <p id="inviteCopyToast" class="social-hint hidden">초대 링크가 복사되었어요! 친구에게 공유해 보세요.</p>
-
-          <!-- 실제 서버 권위형 온라인 대전 (/api/battle/) -->
-          <div class="network-room-card">
-            <div class="network-room-header">🌐 실시간 네트워크 방 만들기</div>
-            <label class="network-field-label" for="onlineRoomTitleInput">방 제목</label>
-            <input id="onlineRoomTitleInput" type="text" class="network-title-input" placeholder="방 제목을 입력하세요 (예: 우리 반 한판 붙자!)" maxlength="28" />
-            <div class="network-action-row">
-              <select id="onlineMaxPlayers" class="network-select">
-                <option value="2">1:1 (2인)</option>
-                <option value="3">1:1:1 (3인)</option>
-              </select>
-              <button id="createOnlineRoomBtn" type="button" class="network-create-btn">🌐 공개 방 만들기</button>
-            </div>
-            <div class="network-divider"></div>
-            <label class="network-field-label" for="onlineInviteInput">초대 코드로 바로 입장</label>
-            <div class="network-action-row">
-              <input id="onlineInviteInput" type="text" class="network-code-input" placeholder="코드 6자리 입력" maxlength="8" />
-              <button id="joinOnlineRoomBtn" type="button" class="network-join-btn">입장</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- 학교명 & 반정보 기반 대전 패널 -->
-        <div id="hubPanelSchool" class="social-panel hidden">
-          <div id="schoolMyBadge" class="school-my-badge">
-            내 소속: <strong id="mySchoolClassLabel">미등록 (회원가입 필요)</strong>
-          </div>
-          <div class="network-room-card" style="margin-bottom:8px;">
-            <div class="network-room-header">🎓 우리 반 온라인 방 만들기</div>
-            <label class="network-field-label" for="schoolRoomTitleInput">우리 반 방 제목</label>
-            <input id="schoolRoomTitleInput" type="text" class="network-title-input" placeholder="방 제목을 입력하세요 (예: 3-1반 1등 가려보자!)" maxlength="28" />
-            <div class="network-action-row">
-              <select id="schoolOnlineMaxPlayers" class="network-select">
-                <option value="2">1:1 (2인)</option>
-                <option value="3">1:1:1 (3인)</option>
-              </select>
-              <button id="createClassOnlineRoomBtn" type="button" class="network-create-btn">🎓 우리 반 방 만들기</button>
-            </div>
-            <div id="schoolOpenRoomsList" style="display:flex; flex-direction:column; gap:6px; margin-top:4px;"></div>
-          </div>
-          <div class="school-battle-pills" role="group" aria-label="반·학교 대전 종류">
-            <button type="button" class="school-mode-pill active" data-school-mode="same_class">🎓 우리 반 내전</button>
-            <button type="button" class="school-mode-pill" data-school-mode="other_class">⚡ 다른 반 대결</button>
-            <button type="button" class="school-mode-pill" data-school-mode="other_school">🏫 학교 대항전</button>
-          </div>
-          <div id="targetClassWrap" class="social-target-wrap hidden">
-            <input id="targetClassInput" type="text" class="social-input" placeholder="상대 반 입력 (예: 3학년 1반)" maxlength="20" />
-            <div class="quick-chips">
-              <button type="button" class="quick-chip target-class-chip" data-val="3학년 1반">3학년 1반</button>
-              <button type="button" class="quick-chip target-class-chip" data-val="3학년 3반">3학년 3반</button>
-              <button type="button" class="quick-chip target-class-chip" data-val="4학년 2반">4학년 2반</button>
-            </div>
-          </div>
-          <div id="targetSchoolWrap" class="social-target-wrap hidden">
-            <div class="school-autocomplete-wrap">
-              <input id="targetSchoolInput" type="text" class="social-input" placeholder="상대 학교명 검색 (예: 염작)" maxlength="24" autocomplete="off" />
-              <div id="targetSchoolAutocomplete" class="school-autocomplete-list hidden"></div>
-            </div>
-            <div class="quick-chips">
-              <button type="button" class="quick-chip target-school-chip" data-val="푸딩초등학교">푸딩초</button>
-              <button type="button" class="quick-chip target-school-chip" data-val="크루아상중학교">크루아상중</button>
-              <button type="button" class="quick-chip target-school-chip" data-val="슈가봉봉고등학교">슈가봉봉고</button>
-            </div>
-          </div>
-          <div class="social-options-row">
-            <label class="radio-pill">
-              <input type="radio" name="schoolTeamSize" value="1v1" checked />
-              <span>1:1 대표전</span>
-            </label>
-            <label class="radio-pill">
-              <input type="radio" name="schoolTeamSize" value="2v2" />
-              <span>2:2 대항전</span>
-            </label>
-          </div>
-
-          <!-- 학교 내 / 반 내 상대 검색 & 도전하기 -->
-          <div class="opponent-search-box">
-            <div class="search-scope-pills" role="group" aria-label="대전 상대 검색 범위">
-              <button type="button" class="search-scope-pill active" data-scope="school">🏫 우리 학교 내 검색</button>
-              <button type="button" class="search-scope-pill" data-scope="class">🎓 우리 반 내 검색</button>
-              <button type="button" class="search-scope-pill" data-scope="all">🌐 전체 검색</button>
-            </div>
-            <input id="opponentSearchInput" type="text" class="social-input" placeholder="학교/반 친구 이름 또는 아이디 검색..." maxlength="24" />
-            <div id="opponentSearchList" class="opponent-search-list"></div>
-          </div>
-        </div>
-
-        <!-- 랜덤 만나기 패널 -->
-        <div id="hubPanelRandom" class="social-panel hidden">
-          <p class="social-hint">🎲 전국의 말랑 요정 중 랜덤 학교·반 상대와 즉시 매칭되어 대결합니다!</p>
-          <div class="social-options-row">
-            <label class="radio-pill">
-              <input type="radio" name="randomTeamSize" value="1v1" checked />
-              <span>1:1 랜덤 매칭</span>
-            </label>
-            <label class="radio-pill">
-              <input type="radio" name="randomTeamSize" value="2v2" />
-              <span>2:2 랜덤 팀전</span>
-            </label>
-          </div>
-        </div>
-
-        <!-- 온라인 방 진행 상태 및 같은 네트워크 열린 방 목록 (항상 표시) -->
-        <div id="onlineRoomStatusBox" class="school-my-badge hidden" style="margin-top:8px; justify-content:space-between; gap:8px;">
-          <span id="onlineRoomStatusText" style="flex:1 1 auto;">방 준비 중...</span>
-          <button id="approveOnlineRoomBtn" type="button" class="social-mini-btn hidden">🔥 대전 시작 승인</button>
-          <button id="cancelOnlineRoomBtn" type="button" class="social-mini-btn outline" style="flex:0 0 auto;">취소</button>
-        </div>
-        <div id="lanOpenRoomsBox" class="school-my-badge" style="margin-top:8px; flex-direction:column; align-items:stretch; gap:6px;">
-          <span style="font-size:12px; opacity:0.95;">📡 같은 네트워크 열린 방 목록 (자동 갱신)</span>
-          <div id="lanOpenRoomsList" style="display:flex; flex-direction:column; gap:4px;"></div>
-        </div>
-        <div id="leaderboardBox" class="school-my-badge" style="margin-top:8px; flex-direction:column; align-items:stretch; gap:6px;">
-          <div style="display:flex; align-items:center; justify-content:space-between; gap:6px; flex-wrap:wrap;">
-            <span style="font-size:12px; font-weight:700; opacity:0.95;">🏆 실시간 점수 · 승률 랭킹</span>
-            <div style="display:flex; gap:4px;">
-              <button type="button" class="quick-chip lb-scope-btn active" data-lb-scope="all">🌐 전체</button>
-              <button type="button" class="quick-chip lb-scope-btn" data-lb-scope="school">🏫 우리 학교</button>
-              <button type="button" class="quick-chip lb-scope-btn" data-lb-scope="class">🎓 우리 반</button>
-            </div>
-          </div>
-          <div id="schoolTopBanner" style="font-size:11.5px; background:rgba(250,204,21,0.14); border:1px solid rgba(250,204,21,0.35); border-radius:8px; padding:5px 8px; color:#FEF08A;">
-            👑 우리 학교 1등 확인 중...
-          </div>
-          <div id="classTopBanner" style="font-size:11.5px; background:rgba(56,189,248,0.14); border:1px solid rgba(56,189,248,0.35); border-radius:8px; padding:5px 8px; color:#BAE6FD;">
-            🎓 우리 반 1등 확인 중...
-          </div>
-          <div id="leaderboardList" style="display:flex; flex-direction:column; gap:4px; max-height:165px; overflow-y:auto;"></div>
-        </div>
       </div>
 
       <div class="lobby-grid">
@@ -245,9 +144,6 @@
         </label>
       </div>
 
-      <button id="startMatchBtn" type="button" class="primary-fire-btn lobby-start-btn">
-        🎮 게임 시작!
-      </button>
     </div>
   </div>
 
@@ -408,61 +304,39 @@
     </footer>
   </div>
 
-  <!-- 3. 회원가입 / 내 정보 등록 모달 (친구 아이디 · 학교명 · 반정보) -->
-  <div id="profileModal" class="modal-backdrop hidden">
+  <div id="profileModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="profileTitle">
     <div class="modal-card profile-modal-card">
-      <p class="modal-kicker">JELLY-CHEEK ID CARD</p>
-      <h2 class="modal-title">회원가입 · 학교/반 등록</h2>
-      <p class="modal-sub">친구 아이디 초대 및 우리 반·우리 학교 대항전에 사용됩니다.</p>
-
+      <h2 id="profileTitle" class="modal-title">내 계정</h2>
       <form id="profileForm" class="profile-form">
-        <label class="profile-field">
-          <span>친구 아이디 (영문/숫자/한글)</span>
-          <input id="profUserId" type="text" required maxlength="20" placeholder="예: mochi_king" />
+        <label class="profile-field" for="profNickname">
+          <span>게임 닉네임</span>
+          <input id="profNickname" type="text" maxlength="32" autocomplete="nickname" placeholder="예: 모찌대장" />
         </label>
-        <label class="profile-field">
-          <span>닉네임</span>
-          <input id="profNickname" type="text" required maxlength="16" placeholder="예: 모찌대장" />
-        </label>
-        <label class="profile-field">
-          <span>학교명 (한국 학교 서버 실시간 검색)</span>
-          <div class="school-autocomplete-wrap">
-            <input id="profSchool" type="text" required maxlength="30" placeholder="예: 염작 (입력하면 학교가 자동 검색돼요)" autocomplete="off" />
-            <div id="schoolAutocompleteList" class="school-autocomplete-list hidden"></div>
-          </div>
-        </label>
-        <div class="profile-field">
-          <span>학년 · 반 (숫자만 입력)</span>
-          <div class="grade-class-row">
-            <label class="num-unit-box">
-              <input id="profGradeNum" type="number" inputmode="numeric" min="1" max="6" required placeholder="3" />
-              <span>학년</span>
-            </label>
-            <label class="num-unit-box">
-              <input id="profClassNum" type="number" inputmode="numeric" min="1" max="30" required placeholder="2" />
-              <span>반</span>
-            </label>
-          </div>
+        <p id="profileHelp" class="modal-sub">처음이라면 랭킹과 친구 초대에 사용할 닉네임을 정하세요. 이미 가입했다면 같은 계정으로 로그인하세요.</p>
+        <div id="socialProviders" class="social-providers">
+          <button type="button" data-social-provider="kakao" disabled>카카오로 계속</button>
+          <button type="button" data-social-provider="naver" disabled>네이버로 계속</button>
+          <button type="button" data-social-provider="google" disabled>Google로 계속</button>
+          <button type="button" data-social-provider="apple" disabled>Apple로 계속</button>
         </div>
-        <div class="modal-actions">
-          <button type="submit" class="primary-fire-btn">💾 등록 완료</button>
-          <button id="closeProfileModalBtn" type="button" class="secondary-btn">닫기</button>
+        <a id="continueSocialLogin" class="hidden" target="_blank" rel="noopener noreferrer">로그인 창 열기</a>
+        <div id="loginPairing" class="profile-field hidden">
+          <label for="loginConfirmationCode">브라우저에 표시된 확인 코드</label>
+          <input id="loginConfirmationCode" type="text" autocomplete="one-time-code" inputmode="numeric" />
+          <button id="confirmLoginCodeBtn" type="button" class="secondary-btn">로그인 확인</button>
         </div>
         <p id="accountStatusText" class="modal-sub" role="status" aria-live="polite"></p>
-        <button id="deleteAccountBtn" type="button" class="secondary-btn">계정 및 서버 전적 삭제</button>
-        <p class="modal-sub"><a href="./privacy.html#account-deletion">계정 삭제 요청 및 개인정보 안내</a></p>
+        <div class="modal-actions">
+          <button id="saveNicknameBtn" type="submit" class="primary-fire-btn hidden">닉네임 저장</button>
+          <button id="cancelSocialLogin" type="button" class="secondary-btn hidden">로그인 취소</button>
+          <button id="closeProfileModalBtn" type="button" class="secondary-btn">닫기</button>
+        </div>
+        <div class="profile-account-actions">
+          <button id="logoutAccountBtn" type="button" class="secondary-btn hidden">로그아웃</button>
+          <button id="deleteAccountBtn" type="button" class="secondary-btn hidden">계정 및 서버 전적 삭제</button>
+        </div>
+        <p class="modal-sub"><a href="./privacy.html#account-deletion">개인정보 및 계정 삭제 안내</a></p>
       </form>
-    </div>
-  </div>
-
-  <!-- 4. 랜덤 만나기 / 매칭 진행 오버레이 -->
-  <div id="matchmakingOverlay" class="modal-backdrop hidden">
-    <div class="modal-card matchmaking-card">
-      <p class="modal-kicker">MATCHMAKING</p>
-      <div id="matchmakingSpinner" class="matchmaking-spinner">🎲</div>
-      <h2 id="matchmakingTitle" class="modal-title">상대를 찾는 중...</h2>
-      <p id="matchmakingDetail" class="modal-sub">전국 말랑 요정 네트워크에 연결 중입니다.</p>
-      <button id="cancelMatchmakingBtn" type="button" class="secondary-btn">취소</button>
     </div>
   </div>
 
@@ -472,7 +346,7 @@
       <p class="modal-kicker">CHALLENGE ALERT</p>
       <div class="challenge-alert-icon">⚔️</div>
       <h2 id="challengeAlertTitle" class="modal-title">도전장이 도착했어요!</h2>
-      <p id="challengeAlertText" class="modal-sub">누군가 당신에게 대전을 도전하였습니다!</p>
+      <p id="challengeAlertText" class="modal-sub">친구가 1:1 대전에 초대했어요.</p>
       <div class="modal-actions">
         <button id="acceptChallengeBtn" type="button" class="primary-fire-btn">🔥 도전 수락!</button>
         <button id="declineChallengeBtn" type="button" class="secondary-btn">거절</button>
@@ -511,6 +385,6 @@
   </div>
 
   <script src="./vendor/matter.min.js"></script>
-  <script type="module" src="./src/main.js?v=53"></script>
+  <script type="module" src="./src/main.js?v=54"></script>
 </body>
 </html>

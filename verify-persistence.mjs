@@ -27,23 +27,13 @@ try {
   let srv = await startBattleServer(0, '127.0.0.1', { store });
   let baseUrl = `http://127.0.0.1:${srv.address().port}`;
 
-  const regA = await api(baseUrl, '/api/battle/accounts', {
-    method: 'POST',
-    body: { userId: 'test_student_01', nickname: '가상유저A', schoolName: '가상초', className: '1반' },
-  });
-  assert.equal(regA.status, 201);
-  assert.equal(regA.json.account.xp, 0);
-
-  const regB = await api(baseUrl, '/api/battle/accounts', {
-    method: 'POST',
-    body: { userId: 'test_student_02', nickname: '가상유저B', schoolName: '가상초', className: '2반' },
-  });
-  assert.equal(regB.status, 201);
-
-  const tokenA = regA.json.accountToken;
-  const tokenB = regB.json.accountToken;
-  const idA = regA.json.account.accountId;
-  const idB = regB.json.account.accountId;
+  const regA = store.loginWithSocialIdentity({ provider: 'google', subject: 'synthetic-a', nickname: '가상유저A' });
+  const regB = store.loginWithSocialIdentity({ provider: 'kakao', subject: 'synthetic-b', nickname: '가상유저B' });
+  assert.equal(regA.account.xp, 0);
+  const tokenA = regA.accountToken;
+  const tokenB = regB.accountToken;
+  const idA = regA.account.accountId;
+  const idB = regB.account.accountId;
 
   // 2) 계정 간 격리 검증 (A 토큰으로 B 조회 시도 -> 403)
   const crossRead = await api(baseUrl, `/api/battle/accounts/me?accountId=${idB}`, { token: tokenA });

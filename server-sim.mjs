@@ -253,7 +253,7 @@ export class OnlineSimulation {
       id: `slot_${slot}`,
       slot,
       charKey,
-      name: String(info.name || CHARACTERS[charKey].name).slice(0, 18),
+      name: info.name || CHARACTERS[charKey].name,
       x,
       y,
       vx: 0,

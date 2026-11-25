@@ -18,6 +18,7 @@ import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
 import android.webkit.JavascriptInterface;
+import android.webkit.JsPromptResult;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -31,22 +32,67 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.HashMap;
 import java.util.Map;
 
 public class MainActivity extends Activity {
     private static final String GAME_URL = "https://43.203.70.197.sslip.io/battle/";
+    private static final String GAME_HOST = "43.203.70.197.sslip.io";
+    private static final String SOCIAL_LOGIN_PROMPT = "boltaengi.openSocialLogin";
     private WebView webView;
     private View networkErrorView;
     private boolean mainFrameFailed;
 
+    private static boolean isGameOrigin(String scheme, String authority) {
+        return "https".equalsIgnoreCase(scheme)
+            && (GAME_HOST.equalsIgnoreCase(authority) || (GAME_HOST + ":443").equalsIgnoreCase(authority));
+    }
+
+    private boolean isGameOrigin(Uri uri) {
+        return uri != null && isGameOrigin(uri.getScheme(), uri.getEncodedAuthority());
+    }
+
     private boolean isGameUrl(Uri uri) {
-        if (uri == null) return false;
+        if (!isGameOrigin(uri)) return false;
         String path = uri.getPath();
-        return "https".equalsIgnoreCase(uri.getScheme())
-            && "43.203.70.197.sslip.io".equalsIgnoreCase(uri.getHost())
-            && (uri.getPort() == -1 || uri.getPort() == 443)
-            && path != null && (path.equals("/battle") || path.startsWith("/battle/"));
+        return path != null && (path.equals("/battle") || path.startsWith("/battle/"));
+    }
+
+    private static boolean isSocialAuthorizationUrl(String value) {
+        if (value == null) return false;
+        try {
+            URI uri = new URI(value);
+            String path = uri.getRawPath();
+            String query = uri.getRawQuery();
+            if (!isGameOrigin(uri.getScheme(), uri.getRawAuthority()) || uri.getRawFragment() != null
+                || query == null || !query.startsWith("ticket=") || query.length() <= "ticket=".length()
+                || query.indexOf('&') >= 0) {
+                return false;
+            }
+            return "/api/battle/auth/authorize/kakao".equals(path)
+                || "/api/battle/auth/authorize/naver".equals(path)
+                || "/api/battle/auth/authorize/google".equals(path)
+                || "/api/battle/auth/authorize/apple".equals(path);
+        } catch (URISyntaxException invalid) {
+            return false;
+        }
+    }
+
+    private boolean openSocialLogin(String url) {
+        if (!isSocialAuthorizationUrl(url)) return false;
+        Intent open = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+        open.addCategory(Intent.CATEGORY_BROWSABLE);
+        // Resolve a browser for the first-party handoff and all ensuing provider redirects.
+        open.setSelector(new Intent(Intent.ACTION_VIEW, Uri.parse("https://browser.invalid/"))
+            .addCategory(Intent.CATEGORY_BROWSABLE));
+        try {
+            startActivity(open);
+            return true;
+        } catch (ActivityNotFoundException | SecurityException unavailable) {
+            return false;
+        }
     }
 
     private WebResourceResponse missingBundledResource() {
@@ -85,6 +131,9 @@ public class MainActivity extends Activity {
         String encoding = mime.startsWith("text/") || mime.equals("application/json") ? "UTF-8" : null;
         Map<String, String> headers = new HashMap<>();
         headers.put("Cache-Control", "no-store");
+        if ("text/html".equals(mime)) {
+            headers.put("Content-Security-Policy", "frame-src 'none'; object-src 'none'");
+        }
         try {
             InputStream content = getAssets().open("web/" + relative);
             return new WebResourceResponse(mime, encoding, 200, "OK", headers, content);
@@ -240,17 +289,32 @@ public class MainActivity extends Activity {
 
             @Override
             public void onPageFinished(WebView view, String url) {
-                if (!mainFrameFailed) networkErrorView.setVisibility(View.GONE);
+                if (!mainFrameFailed && isGameUrl(Uri.parse(url))) {
+                    networkErrorView.setVisibility(View.GONE);
+                    // Unlike @JavascriptInterface, a JS prompt reports the caller's origin to Java.
+                    view.evaluateJavascript("window.AndroidBridge.openSocialLogin = function(url) {"
+                        + "return window.prompt('" + SOCIAL_LOGIN_PROMPT + "', String(url)) === '1'; };", null);
+                }
             }
         });
-        webView.setWebChromeClient(new WebChromeClient());
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onJsPrompt(WebView view, String url, String message, String value, JsPromptResult result) {
+                if (!SOCIAL_LOGIN_PROMPT.equals(message)) return super.onJsPrompt(view, url, message, value, result);
+                String top = view.getUrl();
+                boolean trusted = !mainFrameFailed && url != null && isGameOrigin(Uri.parse(url))
+                    && top != null && isGameUrl(Uri.parse(top));
+                result.confirm(trusted && openSocialLogin(value) ? "1" : "0");
+                return true;
+            }
+        });
         FrameLayout root = new FrameLayout(this);
         root.addView(webView);
         networkErrorView = createNetworkErrorView();
         root.addView(networkErrorView);
         setContentView(root);
         hideSystemBars();
-        webView.loadUrl("https://43.203.70.197.sslip.io/battle/");
+        webView.loadUrl(GAME_URL);
     }
 
     @Override

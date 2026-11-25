@@ -1,82 +1,9 @@
-import time
-from playwright.sync_api import sync_playwright
+"""Run the 3-player browser regression against an isolated local game server."""
+from pathlib import Path
+import subprocess
+import sys
 
-with sync_playwright() as p:
-    b = p.chromium.launch(headless=True)
-    pages = []
-    errs = [[], [], []]
-    for i in range(3):
-        ctx = b.new_context(viewport={"width": 844, "height": 390})
-        pg = ctx.new_page()
-        pg.on("pageerror", lambda e, idx=i: errs[idx].append(f"pageerror:{e}"))
-        pg.on("console", lambda m, idx=i: errs[idx].append(f"console.{m.type}:{m.text}") if m.type == "error" else None)
-        pg.goto("http://192.168.0.39:8791/battle/", wait_until="domcontentloaded")
-        pg.wait_for_selector("#closeInterstitialBtn:not([disabled])", timeout=10000)
-        pg.click("#closeInterstitialBtn")
-        if pg.locator("#profileModal:not(.hidden)").count() > 0:
-            pg.fill("#profUserId", f"p3_user_{i}")
-            pg.fill("#profNickname", f"유저{i+1}")
-            pg.fill("#profSchool", "테스트초")
-            pg.fill("#profGradeNum", "3")
-            pg.fill("#profClassNum", "1")
-            pg.click("#profileModal button.primary-fire-btn")
-            pg.wait_for_selector("#profileModal", state="hidden", timeout=5000)
-        pages.append(pg)
 
-    pages[0].click('button.social-tab[data-hub="friend"]')
-    pages[0].fill("#onlineRoomTitleInput", "우리 반 3인 최강자전")
-    pages[0].select_option("#onlineMaxPlayers", "3")
-    pages[0].click("#createOnlineRoomBtn")
-    pages[0].wait_for_selector("#partyRoomModal:not(.hidden)", timeout=5000)
-    code = (pages[0].text_content("#partyRoomCode") or "").strip()
-    print("P1 party modal code (1/3):", code)
-    assert len(code) >= 4 and code != "------", f"Invalid party code: {code}"
-
-    # P2 joins -> must still wait in lobby (2/3) with 3D party room modal visible on both P1 & P2
-    pages[1].wait_for_selector(f'#lanOpenRoomsList .lan-join-btn[data-code="{code}"]', timeout=8000)
-    pages[1].click(f'#lanOpenRoomsList .lan-join-btn[data-code="{code}"]')
-    pages[1].wait_for_selector("#partyRoomModal:not(.hidden)", timeout=5000)
-    time.sleep(0.5)
-    p1_slots = pages[0].locator("#partySlotsGrid .party-slot-card.joined").count()
-    p2_slots = pages[1].locator("#partySlotsGrid .party-slot-card.joined").count()
-    p1_hidden = pages[0].locator("#gameScreen.hidden").count() == 1
-    p2_hidden = pages[1].locator("#gameScreen.hidden").count() == 1
-    print("WAIT_2_OF_3: joined_slots=", p1_slots, p2_slots, "gameScreen_hidden=", p1_hidden, p2_hidden)
-    assert p1_hidden and p2_hidden, "Game started before 3rd player joined!"
-    assert p1_slots == 2 and p2_slots == 2, f"Expected 2 joined 3D slots, got {p1_slots}, {p2_slots}"
-
-    # Capture 3D Party Waiting Room modal screenshot (portrait phone view for clean full-card check)
-    pages[0].set_viewport_size({"width": 412, "height": 844})
-    time.sleep(0.25)
-    pages[0].screenshot(path="C:/Users/seo44/.gemini/antigravity/brain/cba4b5ba-ff40-427c-9cbc-10111c061e15/party_room_3d_ui.png")
-    pages[0].set_viewport_size({"width": 844, "height": 390})
-
-    # P3 joins -> all 3 enter gameScreen and partyRoomModal hides!
-    pages[2].wait_for_selector(f'#lanOpenRoomsList .lan-join-btn[data-code="{code}"]', timeout=8000)
-    pages[2].click(f'#lanOpenRoomsList .lan-join-btn[data-code="{code}"]')
-    for idx, pg in enumerate(pages):
-        pg.wait_for_selector("#gameScreen:not(.hidden)", timeout=8000)
-        assert pg.locator("#partyRoomModal.hidden").count() == 1, f"P{idx+1} partyRoomModal still visible in game!"
-
-    time.sleep(0.8)
-    pages[0].screenshot(path="C:/Users/seo44/.gemini/antigravity/brain/cba4b5ba-ff40-427c-9cbc-10111c061e15/commercial_3d_char_fx.png")
-
-    active1 = [i for i, pg in enumerate(pages) if not pg.is_disabled("#fireActionBtn")]
-    print("TURN 1 active slots:", active1)
-    assert len(active1) == 1
-    pages[active1[0]].click("#fireActionBtn")
-
-    for pg in pages:
-        pg.wait_for_function("() => Number(document.querySelector('#turnTimelineBadge')?.textContent?.match(/T(\\d+)/)?.[1] || 1) >= 2", timeout=20000)
-    active2 = [i for i, pg in enumerate(pages) if not pg.is_disabled("#fireActionBtn")]
-    print("TURN 2 active slots:", active2)
-    assert len(active2) == 1 and active2[0] != active1[0]
-    pages[active2[0]].click("#fireActionBtn")
-
-    for pg in pages:
-        pg.wait_for_function("() => Number(document.querySelector('#turnTimelineBadge')?.textContent?.match(/T(\\d+)/)?.[1] || 1) >= 3", timeout=20000)
-    active3 = [i for i, pg in enumerate(pages) if not pg.is_disabled("#fireActionBtn")]
-    print("TURN 3 active slots:", active3)
-    assert len(active3) == 1 and active3[0] not in (active1[0], active2[0])
-    print("ALL_3_TURNS_OK! Errors:", errs)
-    b.close()
+if __name__ == '__main__':
+    suite = Path(__file__).resolve().parent / 'tests' / 'verify-online-match-browser.py'
+    raise SystemExit(subprocess.call([sys.executable, str(suite), '--players', '3', *sys.argv[1:]]))

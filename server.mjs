@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { OnlineSimulation } from './server-sim.mjs';
 import { BattlePersistentStore, StoreError } from './battle-store.mjs';
+import { createSocialAuth } from './social-auth.mjs';
 
 const ROOT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const MIME_MAP = {
@@ -49,6 +50,7 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
     new BattlePersistentStore({
       dataDir: options.dataDir || path.join(ROOT_DIR, 'data'),
     });
+  const handleSocialAuth = createSocialAuth({ ...options.socialAuth, store });
   const rooms = new Map();
   const challenges = new Map();
   const MAX_ROOMS = 24;
@@ -106,7 +108,11 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
   function cleanupExpiredRooms() {
     const current = now();
     for (const [cid, ch] of challenges) {
-      if (current - ch.createdAt >= CHALLENGE_TTL_MS || !rooms.has(ch.roomId)) challenges.delete(cid);
+      const room = rooms.get(ch.roomId);
+      if (!room || current - ch.createdAt >= CHALLENGE_TTL_MS) {
+        if (room?.inviteStatus === 'PENDING') room.inviteStatus = 'EXPIRED';
+        challenges.delete(cid);
+      }
     }
     for (const [id, rm] of rooms.entries()) {
       if (rm.status === 'FINISHED') {
@@ -149,6 +155,20 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
     return auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
   }
 
+  function socialAccount(token) {
+    const account = store.authenticateAccount(token);
+    if (!account.provider || !account.nickname || account.needsNickname) {
+      throw new StoreError(403, 'SOCIAL_PROFILE_REQUIRED', '소셜 로그인 후 닉네임을 설정해 주세요.');
+    }
+    return account;
+  }
+
+  function publicChallenge(ch) {
+    if (!ch) return null;
+    const { id, roomId, inviteCode, from, status, createdAt } = ch;
+    return { id, roomId, inviteCode, from, status, createdAt };
+  }
+
   function isHostAllowed(req) {
     const rawHost = String(req.headers.host || '').split(':')[0].toLowerCase().trim();
     if (!rawHost) return true;
@@ -180,6 +200,7 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
       const urlObj = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`);
       const pathname = urlObj.pathname;
       if (pathname.startsWith('/api/battle/')) cleanupExpiredRooms();
+      if (pathname.startsWith('/api/battle/auth/') && await handleSocialAuth(req, res, urlObj)) return;
 
       // 1) /battle -> /battle/ 리다이렉트 & 정적 파일 서빙
       if (pathname === '/battle') {
@@ -234,7 +255,7 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
         const openRooms = [];
         for (const rm of rooms.values()) {
           if (
-            !rm.inviteConsumed &&
+            rm.scope === 'all' && !rm.inviteConsumed &&
             (rm.status === 'WAITING_GUEST' || rm.status === 'WAITING_APPROVAL') &&
             rm.players.length < (rm.maxPlayers || 2)
           ) {
@@ -243,8 +264,6 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
               inviteCode: rm.inviteCode,
               roomTitle: rm.roomTitle || `${rm.players[0]?.name || '호스트'}의 방`,
               hostName: rm.players[0]?.name || '호스트',
-              schoolName: rm.schoolName || '',
-              className: rm.className || '',
               scope: rm.scope || 'all',
               mapPreset: rm.mapPreset,
               playersCount: rm.players.length,
@@ -268,15 +287,14 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
         // Remove live state containing the account as well as its persisted record.
         const removedRoomIds = new Set();
         for (const [id, rm] of rooms) {
-          if (rm.players.some(p => p && p.accountId === account.accountId)) {
+          if (rm.invitedAccountId === account.accountId || rm.players.some(p => p && p.accountId === account.accountId)) {
             if (rm.tickTimer) clearInterval(rm.tickTimer);
             rooms.delete(id);
             removedRoomIds.add(id);
           }
         }
         for (const [id, ch] of challenges) {
-          if (ch.targetUserId === account.userId.toLowerCase() ||
-              String(ch.from?.userId || '').toLowerCase() === account.userId.toLowerCase() ||
+          if (ch.targetAccountId === account.accountId || ch.senderAccountId === account.accountId ||
               removedRoomIds.has(ch.roomId)) challenges.delete(id);
         }
         return sendJson(200, { deleted: true });
@@ -284,37 +302,20 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
 
       // 2.6) 실시간 점수 · 승률 · 계급 순위표 GET /api/battle/leaderboard
       if (req.method === 'GET' && pathname === '/api/battle/leaderboard') {
-        const scope = String(urlObj.searchParams.get('scope') || 'all');
-        const schoolName = String(urlObj.searchParams.get('schoolName') || '').trim();
-        const className = String(urlObj.searchParams.get('className') || '').trim();
-        const { leaderboard, schoolTop, classTop } = store.getLeaderboard({
-          scope,
-          schoolName,
-          className,
+        const { leaderboard } = store.getLeaderboard({
           limit: 20,
+          q: urlObj.searchParams.get('q'),
+          exact: urlObj.searchParams.get('exact') === '1',
         });
-        return sendJson(200, {
-          leaderboard,
-          schoolTop,
-          classTop,
-          rankedRewardsEnabled: true,
-        });
+        return sendJson(200, { leaderboard, rankedRewardsEnabled: true });
       }
 
-      // 2.7) 대기 중인 대결 요청 조회 GET /api/battle/challenges/pending?userId=...
       if (req.method === 'GET' && pathname === '/api/battle/challenges/pending') {
-        const account = store.authenticateAccount(resolveBearer(req));
-        const uid = String(urlObj.searchParams.get('userId') || '').trim().toLowerCase();
-        if (uid && uid !== String(account.userId).toLowerCase()) return sendJson(403, { error: 'FORBIDDEN_ACCOUNT' });
-        const targetId = String(account.userId).toLowerCase();
-        let found = null;
-        for (const [cid, ch] of challenges.entries()) {
-          if (ch.targetUserId === targetId && ch.status === 'PENDING') {
-            found = ch;
-            break;
-          }
-        }
-        return sendJson(200, { challenge: found });
+        const account = socialAccount(resolveBearer(req));
+        const found = [...challenges.values()].find((ch) =>
+          ch.targetAccountId === account.accountId && ch.status === 'PENDING'
+        );
+        return sendJson(200, { challenge: publicChallenge(found) });
       }
 
       // 3) 방 상태 조회 GET /api/battle/rooms/:roomId/state
@@ -334,7 +335,8 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
           status: rm.status,
           slot,
           maxPlayers: rm.maxPlayers,
-          rankedRewardsEnabled: false,
+          rankedRewardsEnabled: true,
+          inviteStatus: slot === 0 && rm.scope === 'invite' ? rm.inviteStatus : undefined,
           inviteCode: rm.inviteCode,
           approvalCode: slot === 0 && rm.status === 'WAITING_APPROVAL' ? rm.approvalCode : undefined,
           players: rm.players.map((p, idx) => ({ slot: idx, name: p.name, charKey: p.charKey })),
@@ -358,12 +360,13 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
       }
 
       // 3.5) 계정 등록/로그인 POST /api/battle/accounts
+      if (pathname === '/api/battle/accounts/nickname') {
+        const account = store.setNickname(resolveBearer(req), body.nickname);
+        return sendJson(200, { account });
+      }
       if (pathname === '/api/battle/accounts') {
         const result = store.registerOrLoginAccount({
           userId: body.userId,
-          nickname: body.nickname,
-          schoolName: body.schoolName,
-          className: body.className,
           accountToken: resolveBearer(req),
         });
         return sendJson(result.created ? 201 : 200, result);
@@ -380,7 +383,7 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
       }
 
       // 4) 방 생성 POST /api/battle/rooms
-      if (pathname === '/api/battle/rooms') {
+      if (pathname === '/api/battle/rooms' || pathname === '/api/battle/rooms/invite') {
         cleanupExpiredRooms();
         if (rooms.size >= MAX_ROOMS) return sendJson(429, { error: 'SERVER_FULL' });
 
@@ -388,31 +391,27 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
         const inviteCode = randomCode(6);
         const hostToken = randomToken();
         const mapPreset = String(body.mapPreset || 'archipelago');
-        let hostAccount = null;
-        const hostAccountToken = body.accountToken ? String(body.accountToken) : '';
-        if (hostAccountToken) {
-          hostAccount = store.authenticateAccount(hostAccountToken);
+        const scope = pathname.endsWith('/invite') ? 'invite' : body.scope ?? 'all';
+        if (scope !== 'all' && scope !== 'invite') {
+          return sendJson(400, { error: 'UNSUPPORTED_ROOM_SCOPE' });
         }
+        const hostAccountToken = resolveBearer(req) || body.accountToken;
+        const hostAccount = socialAccount(hostAccountToken);
         const hostPlayer = {
           charKey: String(body.charKey || 'M01_MOCHI'),
-          name: String(body.name || (hostAccount && hostAccount.nickname) || '호스트').slice(0, 18),
-          accountId: hostAccount ? hostAccount.accountId : null,
-          accountToken: hostAccount ? hostAccountToken : null,
+          name: hostAccount.nickname,
+          accountId: hostAccount.accountId,
+          accountToken: hostAccountToken,
         };
 
-        const maxPlayers = Number(body.maxPlayers) === 3 ? 3 : 2;
+        const maxPlayers = scope === 'all' && Number(body.maxPlayers) === 3 ? 3 : 2;
         const roomTitle = String(body.roomTitle || `${hostPlayer.name}의 방`).trim().slice(0, 28) || `${hostPlayer.name}의 방`;
-        const schoolName = String(body.schoolName || (hostAccount && hostAccount.schoolName) || '').slice(0, 32);
-        const className = String(body.className || (hostAccount && hostAccount.className) || '').slice(0, 24);
-        const scope = body.scope === 'class' || body.scope === 'school' ? body.scope : 'all';
         const rm = {
           id: roomId,
           inviteCode,
           roomTitle,
           inviteConsumed: false,
           maxPlayers,
-          schoolName,
-          className,
           scope,
           approvalCode: randomCode(4),
           status: 'WAITING_GUEST',
@@ -431,6 +430,7 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
           roomId,
           inviteCode,
           memberToken: hostToken,
+          scope,
           slot: 0,
           maxPlayers,
           status: rm.status,
@@ -459,12 +459,13 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
 
         const assignedSlot = targetRoom.players.length;
         const guestToken = randomToken();
-        let guestAccount = null;
-        const guestAccountToken = body.accountToken ? String(body.accountToken) : '';
-        if (guestAccountToken) {
-          guestAccount = store.authenticateAccount(guestAccountToken);
+        const guestAccountToken = resolveBearer(req) || body.accountToken;
+        const guestAccount = socialAccount(guestAccountToken);
+        if (targetRoom.scope !== 'all' && (targetRoom.scope !== 'invite' ||
+            targetRoom.invitedAccountId !== guestAccount.accountId || targetRoom.inviteStatus !== 'ACCEPTED')) {
+          return sendJson(403, { error: 'INVITE_REQUIRED' });
         }
-        if (guestAccount && targetRoom.players.some(p => p.accountId === guestAccount.accountId)) {
+        if (targetRoom.players.some(p => p.accountId === guestAccount.accountId)) {
           return sendJson(409, { error: 'ACCOUNT_ALREADY_IN_ROOM' });
         }
         targetRoom.tokens.set(guestToken, assignedSlot);
@@ -472,9 +473,9 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
         targetRoom.lastSeen.set(guestToken, now());
         const newPlayer = {
           charKey: String(body.charKey || (assignedSlot === 1 ? 'M05_SODAPIN' : 'M02_PUDDING')),
-          name: String(body.name || (guestAccount && guestAccount.nickname) || `플레이어${assignedSlot + 1}`).slice(0, 18),
-          accountId: guestAccount ? guestAccount.accountId : null,
-          accountToken: guestAccount ? guestAccountToken : null,
+          name: guestAccount.nickname,
+          accountId: guestAccount.accountId,
+          accountToken: guestAccountToken,
         };
         targetRoom.players.push(newPlayer);
         targetRoom.inviteConsumed = targetRoom.players.length >= (targetRoom.maxPlayers || 2);
@@ -486,6 +487,7 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
         return sendJson(200, {
           roomId: targetRoom.id,
           memberToken: guestToken,
+          scope: targetRoom.scope,
           slot: assignedSlot,
           maxPlayers: targetRoom.maxPlayers,
           status: targetRoom.status,
@@ -557,47 +559,46 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
 
       // 8) 대결 요청 보내기 POST /api/battle/challenges
       if (pathname === '/api/battle/challenges') {
-        const account = store.authenticateAccount(resolveBearer(req));
-        const targetUserId = String(body.targetUserId || '').trim().toLowerCase();
+        const account = socialAccount(resolveBearer(req));
         const inviteCode = String(body.inviteCode || '').trim().toUpperCase();
-        if (!targetUserId || !inviteCode) return sendJson(400, { error: 'MISSING_CHALLENGE_FIELDS' });
-        const rm = rooms.get(String(body.roomId || ''));
-        if (!rm || rm.status !== 'WAITING_GUEST' || rm.inviteCode !== inviteCode ||
+        if (!body.targetNickname || !inviteCode) return sendJson(400, { error: 'MISSING_CHALLENGE_FIELDS' });
+        const rm = rooms.get(body.roomId);
+        if (!rm || rm.scope !== 'invite' || rm.status !== 'WAITING_GUEST' || rm.inviteCode !== inviteCode ||
             rm.players[0]?.accountId !== account.accountId) return sendJson(403, { error: 'FORBIDDEN_ROOM' });
-        if (targetUserId === String(account.userId).toLowerCase()) return sendJson(400, { error: 'SELF_CHALLENGE' });
+        const target = store.findAccountByNickname(body.targetNickname);
+        if (!target) return sendJson(404, { error: 'NICKNAME_NOT_FOUND' });
+        if (target.accountId === account.accountId) return sendJson(400, { error: 'SELF_CHALLENGE' });
         if (challenges.size >= 500) return sendJson(429, { error: 'CHALLENGE_LIMIT' });
-        if ([...challenges.values()].some((ch) => ch.roomId === rm.id && ch.status === 'PENDING')) {
-          return sendJson(429, { error: 'CHALLENGE_ALREADY_PENDING' });
-        }
+        if (rm.invitedAccountId) return sendJson(409, { error: 'INVITATION_ALREADY_SENT' });
         const cid = `chg_${randomCode(6)}`;
         const ch = {
           id: cid,
-          targetUserId,
+          targetAccountId: target.accountId,
+          senderAccountId: account.accountId,
           inviteCode,
           roomId: rm.id,
-          from: {
-            userId: account.userId,
-            nickname: account.nickname,
-            schoolName: account.schoolName || '',
-            className: account.className || '',
-          },
+          from: { nickname: account.nickname },
           status: 'PENDING',
           createdAt: now(),
         };
+        rm.invitedAccountId = target.accountId;
+        rm.inviteStatus = 'PENDING';
         challenges.set(cid, ch);
-        return sendJson(201, { challenge: ch });
+        return sendJson(201, { challenge: publicChallenge(ch) });
       }
 
       // 9) 대결 요청 응답 POST /api/battle/challenges/:id/respond
       const chgRespMatch = pathname.match(/^\/api\/battle\/challenges\/([A-Za-z0-9_-]+)\/respond$/);
       if (chgRespMatch) {
-        const account = store.authenticateAccount(resolveBearer(req));
+        const account = socialAccount(resolveBearer(req));
         const ch = challenges.get(chgRespMatch[1]);
         if (!ch) return sendJson(404, { error: 'CHALLENGE_NOT_FOUND' });
-        if (ch.targetUserId !== String(account.userId).toLowerCase()) return sendJson(403, { error: 'FORBIDDEN_ACCOUNT' });
+        if (ch.targetAccountId !== account.accountId) return sendJson(403, { error: 'FORBIDDEN_ACCOUNT' });
         if (ch.status !== 'PENDING') return sendJson(409, { error: 'CHALLENGE_ALREADY_RESPONDED' });
+        if (typeof body.accept !== 'boolean') return sendJson(400, { error: 'INVALID_INVITE_RESPONSE' });
         ch.status = body.accept ? 'ACCEPTED' : 'DECLINED';
-        return sendJson(200, { challenge: ch });
+        rooms.get(ch.roomId).inviteStatus = ch.status;
+        return sendJson(200, { challenge: publicChallenge(ch) });
       }
 
       return sendJson(404, { error: 'NOT_FOUND' });

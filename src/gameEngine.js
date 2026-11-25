@@ -10,9 +10,9 @@ const Matter = window.Matter;
 
 const XP_SAVE_KEY = 'puffpuff_xp_progress_v2';
 
-function readXpProgress() {
+function readXpProgress(key = XP_SAVE_KEY) {
   try {
-    const stored = JSON.parse(localStorage.getItem(XP_SAVE_KEY));
+    const stored = JSON.parse(localStorage.getItem(key));
     if (Number.isSafeInteger(stored?.xp) && stored.xp >= 0 && Array.isArray(stored.recentRooms)) {
       return stored;
     }
@@ -89,6 +89,8 @@ export class GameEngine {
     this.frameCount = 0;
 
     // 계급(레벨) & 외형 꾸미기 (성능 차이 0% — 순수 명예/코스메틱)
+    this.progressOwner = null;
+    this.progressKey = XP_SAVE_KEY;
     const savedProgress = readXpProgress();
     const legacyXp = Number(localStorage.getItem('puffpuff_xp'));
     this.playerXp = savedProgress?.xp ?? (Number.isSafeInteger(legacyXp) && legacyXp > 0 ? legacyXp : 0);
@@ -329,6 +331,26 @@ export class GameEngine {
     return false;
   }
 
+  setProgressOwner(userId, serverXp = 0, migrateLegacy = false) {
+    const key = userId ? XP_SAVE_KEY + ':' + encodeURIComponent(userId) : XP_SAVE_KEY;
+    const saved = readXpProgress(key);
+    const legacy = (!userId || migrateLegacy) ? readXpProgress() : null;
+    const progress = saved || legacy;
+    const legacyXp = (!userId || migrateLegacy) ? Number(localStorage.getItem('puffpuff_xp')) : 0;
+    const xp = progress?.xp ?? (Number.isSafeInteger(legacyXp) ? legacyXp : 0);
+    const floor = Number.isSafeInteger(serverXp) ? serverXp : 0;
+    this.playerXp = Math.max(0, xp, floor, this.progressKey === key ? this.playerXp : 0);
+    this.recentRewardedRooms = progress?.recentRooms ?? [];
+    this.progressOwner = userId;
+    this.progressKey = key;
+    if (userId && (!saved || saved.xp < this.playerXp)) {
+      try { localStorage.setItem(key, JSON.stringify({xp: this.playerXp, recentRooms: this.recentRewardedRooms})); }
+      catch { /* Continue playing with the server's confirmed total. */ }
+    }
+    if (this.carts.length) this.carts[0].rankInfo = this.getRankInfo();
+    this.notifyHud();
+  }
+
   getRankInfo() {
     let cur = RANKS[0];
     let next = RANKS[1] || null;
@@ -344,7 +366,7 @@ export class GameEngine {
   grantXp(amount, reason = '', roomReceipt = null) {
     if (!Number.isSafeInteger(amount) || amount <= 0) return;
     const prevLv = this.getRankInfo().current.level;
-    const saved = readXpProgress();
+    const saved = readXpProgress(this.progressKey);
     if (saved && saved.xp >= this.playerXp) {
       this.playerXp = saved.xp;
       this.recentRewardedRooms = saved.recentRooms;
@@ -357,8 +379,8 @@ export class GameEngine {
     }
     try {
       // A process exit between writes must never separate the receipt from the XP it credits.
-      localStorage.setItem(XP_SAVE_KEY, JSON.stringify({ xp: this.playerXp, recentRooms: this.recentRewardedRooms }));
-      localStorage.setItem('puffpuff_xp', String(this.playerXp));
+      localStorage.setItem(this.progressKey, JSON.stringify({ xp: this.playerXp, recentRooms: this.recentRewardedRooms }));
+      if (!this.progressOwner) localStorage.setItem('puffpuff_xp', String(this.playerXp));
     } catch { /* Keep the current session playable when storage is full. */ }
     const after = this.getRankInfo();
     if (this.carts[0]) {
