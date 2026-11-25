@@ -77,6 +77,64 @@ def check_match(browser, url):
         expect(page.locator('#turnTimelineBadge')).to_contain_text('T1')
         expect(page.locator('#gameOverModal')).to_be_hidden()
     assert not errors, errors
+    for context in contexts:
+        context.close()
+
+
+def check_legacy_rematch(browser, url):
+    host = browser.new_page()
+    guest = browser.new_page()
+    register(host, url, 'legacyhost')
+    register(guest, url, 'legacyguest')
+    scopes = []
+
+    def record_creation(request):
+        if request.method == 'POST' and request.url.endswith('/api/battle/rooms'):
+            scopes.append(request.post_data_json['scope'])
+
+    def omit_room_scope(route):
+        response = route.fetch()
+        state = response.json()
+        state.pop('scope', None)
+        route.fulfill(response=response, json=state)
+
+    host.on('request', record_creation)
+    host.route('**/api/battle/rooms/*/state', omit_room_scope)
+    host.locator('[data-hub=school]').click()
+    host.locator('#createClassOnlineRoomBtn').click()
+    for has_saved_scope in (True, False):
+        expect(host.locator('#partyRoomModal')).to_be_visible()
+        guest.locator('[data-hub=friend]').click()
+        join(guest, host.locator('#partyRoomCode').inner_text())
+        expect(host.locator('#gameScreen')).to_be_visible()
+        guest.locator('#backToLobbyBtn').click()
+        expect(host.locator('#gameOverModal')).to_be_visible()
+        if not has_saved_scope:
+            # Session saved by a released client, before the scope was stored.
+            host.evaluate("""() => {
+                const key = 'boltaengi_online_session_v1';
+                const session = JSON.parse(sessionStorage.getItem(key));
+                delete session.scope;
+                sessionStorage.setItem(key, JSON.stringify(session));
+            }""")
+        host.reload()
+        expect(host.locator('#gameOverModal')).to_be_visible()
+        action = host.locator('#modalRestartBtn')
+        if not has_saved_scope:
+            expect(action).to_have_text('로비에서 방 범위 선택')
+        action.click()
+        if has_saved_scope:
+            expect(host.locator('#partyRoomModal')).to_be_visible()
+            assert scopes == ['class', 'class'], scopes
+    expect(host.locator('#createClassOnlineRoomBtn')).to_be_visible()
+    expect(host.locator('#partyRoomModal')).to_be_hidden()
+    assert scopes == ['class', 'class'], scopes
+    host.locator('[data-hub=friend]').click()
+    host.locator('#createOnlineRoomBtn').click()
+    expect(host.locator('#partyRoomModal')).to_be_visible()
+    assert scopes == ['class', 'class', 'all'], scopes
+    host.close()
+    guest.close()
 
 
 if __name__ == '__main__':
@@ -89,9 +147,11 @@ if __name__ == '__main__':
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(executable_path=os.environ.get('BATTLE_CHROMIUM_PATH'))
                 try:
-                    check_match(browser, f'http://127.0.0.1:{port}/battle/')
+                    url = f'http://127.0.0.1:{port}/battle/'
+                    check_match(browser, url)
+                    check_legacy_rematch(browser, url)
                 finally:
                     browser.close()
         finally:
             server.terminate()
-    print('Passed 2P fire, air trigger, refresh, single XP award and online rematch.')
+    print('Passed 2P fire, air trigger, refresh, single XP award and online rematch with current and legacy scope data.')

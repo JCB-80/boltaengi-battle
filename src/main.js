@@ -17,7 +17,7 @@ import {
   subscribeChallenges,
   searchKoreanSchools,
 } from './social.js?v=30';
-import { OnlineBattleClient } from './onlineAdapter.js?v=2';
+import { OnlineBattleClient } from './onlineAdapter.js?v=3';
 
 const canvas = document.getElementById('gameCanvas');
 const renderer = new GameRenderer(canvas);
@@ -1585,9 +1585,10 @@ ui.modalRestartBtn.addEventListener('click', () => {
   const room = finishedOnlineRoom;
   const host = onlineClient.slot === 0;
   returnToLobby();
-  if (host && room) {
-    switchSocialHub(room.scope === 'all' ? 'friend' : 'school');
-    createOnlineRoom(room.scope, room);
+  if (host) {
+    switchSocialHub(room?.scope === 'all' ? 'friend' : 'school');
+    if (room?.scope) createOnlineRoom(room.scope, room);
+    else ui.createClassOnlineRoomBtn?.focus();
   } else {
     switchSocialHub('friend');
     ui.onlineInviteInput.value = '';
@@ -1912,13 +1913,14 @@ function handleOnlineRoomState(res) {
     }
     if (res.status === 'FINISHED') {
       finishedOnlineRoom = {
-        scope: res.scope || 'all',
+        scope: onlineClient.roomScope,
         roomTitle: res.roomTitle,
         maxPlayers: res.maxPlayers || res.snapshot.carts.length,
         mapPreset: res.snapshot.mapKey,
         charKey: res.snapshot.carts[onlineClient.slot]?.charKey || ui.charSelect.value,
       };
-      ui.modalRestartBtn.textContent = onlineClient.slot === 0 ? '새 온라인 방 만들기' : '새 초대 코드로 입장';
+      const hostAction = finishedOnlineRoom.scope ? '새 온라인 방 만들기' : '로비에서 방 범위 선택';
+      ui.modalRestartBtn.textContent = onlineClient.slot === 0 ? hostAction : '새 초대 코드로 입장';
       ui.backToLobbyBtn.textContent = '로비';
       onlineClient.stopPolling();
     }

@@ -6,9 +6,14 @@ const SESSION_KEY = 'boltaengi_online_session_v1';
 const ACCOUNT_KEY = 'boltaengi_account_auth_v1';
 const ACCOUNT_KEY_PREFIX = 'boltaengi_account_auth_v2:';
 
+function knownRoomScope(scope) {
+  return ['all', 'class', 'school'].includes(scope) ? scope : null;
+}
+
 export class OnlineBattleClient {
   constructor() {
     this.roomId = null;
+    this.roomScope = null;
     this.token = null;
     this.slot = null;
     this.seq = 0;
@@ -140,7 +145,7 @@ export class OnlineBattleClient {
     if (this.roomId && this.token) {
       sessionStorage.setItem(
         SESSION_KEY,
-        JSON.stringify({ roomId: this.roomId, token: this.token, slot: this.slot, seq: this.seq })
+        JSON.stringify({ roomId: this.roomId, scope: this.roomScope, token: this.token, slot: this.slot, seq: this.seq })
       );
     }
   }
@@ -152,6 +157,7 @@ export class OnlineBattleClient {
       const s = JSON.parse(raw);
       if (!s?.roomId || !s?.token) return null;
       this.roomId = s.roomId;
+      this.roomScope = knownRoomScope(s.scope);
       this.token = s.token;
       this.slot = s.slot;
       this.seq = s.seq || 0;
@@ -166,6 +172,7 @@ export class OnlineBattleClient {
     const token = this.token;
     this.stopPolling();
     this.roomId = null;
+    this.roomScope = null;
     this.token = null;
     this.slot = null;
     this.seq = 0;
@@ -221,6 +228,7 @@ export class OnlineBattleClient {
       accountToken: this.getActiveAccountAuth()?.accountToken || undefined,
     }, false);
     this.roomId = res.roomId;
+    this.roomScope = knownRoomScope(res.scope === undefined ? scope : res.scope);
     this.token = res.memberToken;
     this.slot = res.slot;
     this.seq = 0;
@@ -237,6 +245,7 @@ export class OnlineBattleClient {
       accountToken: this.getActiveAccountAuth()?.accountToken || undefined,
     }, false);
     this.roomId = res.roomId;
+    this.roomScope = knownRoomScope(res.scope);
     this.token = res.memberToken;
     this.slot = res.slot;
     this.seq = 0;
@@ -281,6 +290,11 @@ export class OnlineBattleClient {
         if (state && this.roomId === reqRoomId && this.token === reqToken) {
           failures = 0;
           retryAt = 0;
+          // Older servers omit scope. Keep the host's explicit choice for this room.
+          if (state.scope !== undefined && knownRoomScope(state.scope) !== this.roomScope) {
+            this.roomScope = knownRoomScope(state.scope);
+            this.saveSession();
+          }
           onState(state);
         }
       } catch (err) {
