@@ -330,6 +330,7 @@ export function startBattleServer(port = 8791, host = '127.0.0.1', options = {})
         return sendJson(200, {
           roomId: rm.id,
           roomTitle: rm.roomTitle || `${rm.players[0]?.name || '호스트'}의 방`,
+          scope: rm.scope,
           status: rm.status,
           slot,
           maxPlayers: rm.maxPlayers,

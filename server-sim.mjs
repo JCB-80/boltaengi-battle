@@ -385,6 +385,7 @@ export class OnlineSimulation {
       }
       if (action.facing === 1 || action.facing === -1) actor.facing = action.facing;
       if (action.shellKey && SHELLS[action.shellKey]) actor.selectedShell = action.shellKey;
+      if (typeof action.useUltimate === 'boolean') actor.useUltimate = action.useUltimate && actor.ultGauge >= 100;
 
       const shell = SHELLS[actor.selectedShell] || SHELLS.ACORN_SPLIT;
       const rad = (actor.aimElevation * Math.PI) / 180;
@@ -427,6 +428,7 @@ export class OnlineSimulation {
   }
 
   tick() {
+    if (this.phase === 'GAME_OVER') return;
     this.frameCount++;
 
     for (const c of this.carts) {
@@ -461,6 +463,11 @@ export class OnlineSimulation {
     }
 
     if (this.phase === 'AIM') {
+      if (!this.carts[this.activeSlot].alive || !this.carts.some(c => c.alive && c.slot !== this.activeSlot)) {
+        this.phase = 'SETTLE';
+        this.settleCounter = 24;
+        return;
+      }
       if (this.turnTimerFrames > 0) {
         this.turnTimerFrames--;
         if (this.turnTimerFrames <= 0) {
@@ -535,7 +542,7 @@ export class OnlineSimulation {
       }
     } else if (this.phase === 'SETTLE') {
       this.settleCounter--;
-      if (this.settleCounter <= 0) {
+      if (this.settleCounter <= 0 && this.carts.every(cart => !cart.alive || cart.vy === 0)) {
         this._advanceTurn();
       }
     }
@@ -622,6 +629,9 @@ export class OnlineSimulation {
       carts: this.carts.map((c) => ({ ...c })),
       projectiles: this.projectiles.map((p) => ({
         id: p.id,
+        ownerSlot: p.ownerSlot,
+        ageFrames: p.ageFrames,
+        airTriggered: p.airTriggered,
         x: p.x,
         y: p.y,
         vx: p.vx,

@@ -1479,16 +1479,19 @@ export class GameRenderer {
       ctx.stroke();
     }
 
-    ctx.font = 'bold 11px "Pretendard", "Malgun Gothic", sans-serif';
+    // Match the seat shown in the HUD so identical character skins remain distinguishable.
+    ctx.font = 'bold 16px "Pretendard", "Malgun Gothic", sans-serif';
     ctx.textAlign = 'center';
-    const shortName = cart.spec?.name || cart.displayName;
-    const tag = `${shortName} ${cart.hp}`;
-    const tagW = Math.max(46, ctx.measureText(tag).width + 12);
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.76)';
-    this.roundRect(ctx, -tagW / 2, barY + 9, tagW, 15, 7.5);
+    const tag = `${cart.slotIndex + 1}P · ${cart.spec?.name || cart.displayName}`;
+    const tagW = Math.min(138, Math.max(66, ctx.measureText(tag).width + 16));
+    ctx.fillStyle = '#172336';
+    this.roundRect(ctx, -tagW / 2, barY + 10, tagW, 24, 9);
     ctx.fill();
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillText(tag, 0, barY + 20);
+    ctx.strokeStyle = isCurrent ? '#fdd767' : '#c5dfeb';
+    ctx.lineWidth = isCurrent ? 3 : 1.5;
+    ctx.stroke();
+    ctx.fillStyle = isCurrent ? '#fff1bf' : '#f6fbff';
+    ctx.fillText(tag, 0, barY + 28, tagW - 10);
 
     ctx.restore();
   }

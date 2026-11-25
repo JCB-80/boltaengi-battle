@@ -8,6 +8,18 @@ import { computeAIShot } from './ai.js';
 
 const Matter = window.Matter;
 
+const XP_SAVE_KEY = 'puffpuff_xp_progress_v2';
+
+function readXpProgress() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(XP_SAVE_KEY));
+    if (Number.isSafeInteger(stored?.xp) && stored.xp >= 0 && Array.isArray(stored.recentRooms)) {
+      return stored;
+    }
+  } catch { /* Fall back to in-memory or legacy progress. */ }
+  return null;
+}
+
 export class GameEngine {
   constructor({ renderer, onHudUpdate, onRemoteAction = null }) {
     this.renderer = renderer;
@@ -65,7 +77,7 @@ export class GameEngine {
       maxLife: 105,
     };
     this.turnNumber = 1;
-    this.phase = 'AIM'; // 'AIM' | 'FLIGHT' | 'SETTLE' | 'GAME_OVER'
+    this.phase = 'IDLE'; // 'IDLE' | 'AIM' | 'FLIGHT' | 'SETTLE' | 'GAME_OVER'
     this.turnTimerFrames = 20 * 60;
     this.turnTimeLeft = 20;
     this.activeActor = null;
@@ -77,7 +89,10 @@ export class GameEngine {
     this.frameCount = 0;
 
     // 계급(레벨) & 외형 꾸미기 (성능 차이 0% — 순수 명예/코스메틱)
-    this.playerXp = Number(localStorage.getItem('puffpuff_xp') || '0');
+    const savedProgress = readXpProgress();
+    const legacyXp = Number(localStorage.getItem('puffpuff_xp'));
+    this.playerXp = savedProgress?.xp ?? (Number.isSafeInteger(legacyXp) && legacyXp > 0 ? legacyXp : 0);
+    this.recentRewardedRooms = savedProgress?.recentRooms ?? [];
     this.cosmeticEnabled = localStorage.getItem('puffpuff_cosmetic') !== 'off';
 
     // 드래그 조준 상태
@@ -164,7 +179,12 @@ export class GameEngine {
     this.pendingFollowUpShots = [];
     this.winnerText = '';
     this.turnNumber = 1;
+    this.phase = 'AIM';
     this.hitstopFrames = 0;
+    this.lastTornadoTurn = 0;
+    this.tornado.alertFrames = 0;
+    this.pityCutin.active = false;
+    this.pityCutin.cart = null;
 
     const terraces = this.terrain.generate(this.mapPreset);
     const roster = Array.isArray(customRoster) && customRoster.length >= 2
@@ -321,11 +341,25 @@ export class GameEngine {
     return { current: cur, next, xp: this.playerXp };
   }
 
-  grantXp(amount, reason = '') {
-    if (amount <= 0) return;
+  grantXp(amount, reason = '', roomReceipt = null) {
+    if (!Number.isSafeInteger(amount) || amount <= 0) return;
     const prevLv = this.getRankInfo().current.level;
+    const saved = readXpProgress();
+    if (saved && saved.xp >= this.playerXp) {
+      this.playerXp = saved.xp;
+      this.recentRewardedRooms = saved.recentRooms;
+    }
+    if (roomReceipt && this.recentRewardedRooms.includes(roomReceipt)) return;
     this.playerXp += amount;
-    localStorage.setItem('puffpuff_xp', String(this.playerXp));
+    if (roomReceipt) {
+      // Finished rooms expire on the server after two minutes.
+      this.recentRewardedRooms = [...this.recentRewardedRooms.slice(-127), roomReceipt];
+    }
+    try {
+      // A process exit between writes must never separate the receipt from the XP it credits.
+      localStorage.setItem(XP_SAVE_KEY, JSON.stringify({ xp: this.playerXp, recentRooms: this.recentRewardedRooms }));
+      localStorage.setItem('puffpuff_xp', String(this.playerXp));
+    } catch { /* Keep the current session playable when storage is full. */ }
     const after = this.getRankInfo();
     if (this.carts[0]) {
       this.carts[0].rankInfo = after;
@@ -515,6 +549,7 @@ export class GameEngine {
         power: actor.aimPower,
         facing: actor.facing,
         shellKey: actor.selectedShell,
+        useUltimate: actor.useUltimate,
       });
       return true;
     }
@@ -616,6 +651,7 @@ export class GameEngine {
   triggerAirSkill() {
     if (this.phase !== 'FLIGHT') return false;
     if (this.isRemoteMatch) {
+      if (this.activeActor?.controller !== 'human' || !this.projectiles.some(p => p.canAirTrigger())) return false;
       this.audio.playAirTrigger();
       this.onRemoteAction?.({ type: 'AIR_TRIGGER' });
       return true;
@@ -860,7 +896,14 @@ export class GameEngine {
     });
   }
 
+  didLocalPlayerWin() {
+    if (this.isRemoteMatch) return this.carts.some(cart => cart.controller === 'human' && cart.alive);
+    const profileTeam = this.carts[0]?.teamId;
+    return this.carts.some(cart => cart.alive && cart.teamId === profileTeam);
+  }
+
   checkVictory() {
+    if (this.phase === 'GAME_OVER') return true;
     const aliveTeams = new Set(this.carts.filter((c) => c.alive).map((c) => c.teamId));
     if (aliveTeams.size <= 1) {
       this.phase = 'GAME_OVER';
@@ -877,7 +920,7 @@ export class GameEngine {
           ? `${winCart.displayName} 추락 완승!`
           : `${winCart.displayName} 승리!`;
       }
-      if (this.carts[0]?.alive) {
+      if (this.didLocalPlayerWin()) {
         this.grantXp(50, '승리');
       } else {
         this.grantXp(15, '참여');
@@ -889,15 +932,17 @@ export class GameEngine {
   }
 
   tick(heldKeys) {
+    if (this.phase === 'IDLE') return;
     this.frameCount++;
+    if (this.phase === 'GAME_OVER') {
+      this.updateVisualEffects();
+      this.renderFrame();
+      return;
+    }
 
     if (this.isRemoteMatch) {
-      if (this.phase === 'AIM' && this.activeActor?.controller === 'human' && this.frameCount % 4 === 0) {
-        if (heldKeys.has('ArrowLeft') || heldKeys.has('KeyA') || heldKeys.has('UI_LEFT')) {
-          this.onRemoteAction?.({ type: 'MOVE', dir: -1 });
-        } else if (heldKeys.has('ArrowRight') || heldKeys.has('KeyD') || heldKeys.has('UI_RIGHT')) {
-          this.onRemoteAction?.({ type: 'MOVE', dir: 1 });
-        }
+      if (this.phase === 'AIM' && this.activeActor?.controller === 'human') {
+        this.handleHumanContinuousInput(heldKeys);
       }
       // 60fps 부드러운 온라인 캐릭터 위치 보간 + 발사체 외삽 이동
       for (const c of this.carts) {
@@ -925,45 +970,14 @@ export class GameEngine {
         }
       }
       this.updateVisualEffects();
-      this.renderer.render({
-        terrain: this.terrain,
-        structures: this.structures,
-        carts: this.carts,
-        projectiles: this.projectiles,
-        particles: this.particles,
-        shockwaves: this.shockwaves,
-        floatingTexts: this.floatingTexts,
-        wind: this.wind,
-        weather: this.weather,
-        tornado: this.tornado,
-        skyBox: this.skyBox,
-        fixedBoxes: this.fixedBoxes,
-        pityCutin: this.pityCutin,
-        phase: this.phase,
-        activeActor: this.activeActor,
-        dragState: this.dragState,
-        frameCount: this.frameCount,
-      });
+      this.renderFrame();
       return;
     }
 
     // 강한 스킬 임팩트 히트스탑 (찰나의 정지로 타격감 극대화)
     if (this.hitstopFrames > 0) {
       this.hitstopFrames--;
-      this.renderer.render({
-        terrain: this.terrain,
-        structures: this.structures,
-        carts: this.carts,
-        projectiles: this.projectiles,
-        particles: this.particles,
-        shockwaves: this.shockwaves,
-        floatingTexts: this.floatingTexts,
-        wind: this.wind,
-        phase: this.phase,
-        activeActor: this.activeActor,
-        dragState: this.dragState,
-        frameCount: this.frameCount,
-      });
+      this.renderFrame();
       return;
     }
 
@@ -1058,7 +1072,7 @@ export class GameEngine {
     // 4) 페이즈별 진행 로직
     let handledHumanMove = false;
     if (this.phase === 'AIM' && this.activeActor) {
-      if (!this.activeActor.alive) {
+      if (!this.activeActor.alive || !this.carts.some(c => c.alive && c.teamId !== this.activeActor.teamId)) {
         this.enterSettlePhase();
       } else if (this.activeActor.controller === 'human') {
         this.handleHumanContinuousInput(heldKeys);
@@ -1116,7 +1130,10 @@ export class GameEngine {
     // 5) 이펙트 파티클 및 플로팅 텍스트 감쇠
     this.updateVisualEffects();
 
-    // 6) 화면 렌더링
+    this.renderFrame();
+  }
+
+  renderFrame() {
     this.renderer.render({
       terrain: this.terrain,
       structures: this.structures,
@@ -1225,19 +1242,20 @@ export class GameEngine {
   handleHumanContinuousInput(heldKeys) {
     const actor = this.activeActor;
     let changed = false;
-
+    let dir = 0;
     if (heldKeys.has('ArrowLeft') || heldKeys.has('KeyA') || heldKeys.has('UI_LEFT')) {
-      if (actor.drive(-1, this.terrain)) changed = true;
-      else if (actor.facing !== -1) {
-        actor.facing = -1;
-        changed = true;
-      }
+      dir = -1;
     } else if (heldKeys.has('ArrowRight') || heldKeys.has('KeyD') || heldKeys.has('UI_RIGHT')) {
-      if (actor.drive(1, this.terrain)) changed = true;
-      else if (actor.facing !== 1) {
-        actor.facing = 1;
-        changed = true;
+      dir = 1;
+    }
+    if (dir) {
+      if (this.isRemoteMatch) {
+        if (this.frameCount % 4 === 0 && actor.fuel > 0) this.onRemoteAction?.({ type: 'MOVE', dir });
+      } else {
+        changed = actor.drive(dir, this.terrain);
       }
+      if (actor.facing !== dir) changed = true;
+      actor.facing = dir;
     }
 
     if (this.frameCount % 3 === 0) {

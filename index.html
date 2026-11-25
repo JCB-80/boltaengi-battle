@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Jua&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="./styles/main.css?v=72" />
+  <link rel="stylesheet" href="./styles/main.css?v=73" />
 </head>
 <body>
   <!-- 1. 게임 진입 전 로비 화면 (모드 · 캐릭터 · 지형 · AI 난이도 설정) -->
@@ -283,6 +283,7 @@
 
         <!-- 하단 중앙 플로팅 양측 3D 아바타 & 체력바 (고각·구슬 사이 구름 공간 활용) -->
         <div id="bottomHpHud" class="floating-bottom-hp-hud">
+          <div id="battleRoster" class="battle-roster" role="list" aria-label="대전 참가자 체력"></div>
           <div class="hud-player left">
             <img id="hudLeftAvatar" class="hud-avatar" src="./assets/chars/M01_MOCHI.png" alt="나" />
             <div class="hud-p-info">
@@ -342,6 +343,7 @@
               <button id="charSkillBtn1" type="button" class="skill-chip" data-skill-slot="1" data-skill="TORI_SMASH">🌰 강타</button>
               <button id="charSkillBtn2" type="button" class="skill-chip" data-skill-slot="2" data-skill="TORI_DOUBLE">⚡ 2연발</button>
             </div>
+            <small id="onlineSkillNote" class="hidden">캐릭터 고유 스킬은 로컬 대전 전용입니다.</small>
           </div>
         </div>
 
@@ -509,6 +511,6 @@
   </div>
 
   <script src="./vendor/matter.min.js"></script>
-  <script type="module" src="./src/main.js?v=51"></script>
+  <script type="module" src="./src/main.js?v=52"></script>
 </body>
 </html>

@@ -1,7 +1,7 @@
 // 말랑포포: 폭신폭신 공성전 — 메인 엔트리 및 입력·UI 바인딩
 import { CHARACTERS, CHARACTER_LIST, SHELLS, SKILL_MODES, WORLD } from './config.js?v=27';
-import { GameRenderer, drawSpiritAvatar, drawPetMagnifierFrame } from './renderer.js?v=41';
-import { GameEngine } from './gameEngine.js?v=45';
+import { GameRenderer, drawSpiritAvatar, drawPetMagnifierFrame } from './renderer.js?v=42';
+import { GameEngine } from './gameEngine.js?v=46';
 import {
   loadUserProfile,
   saveUserProfile,
@@ -17,7 +17,7 @@ import {
   subscribeChallenges,
   searchKoreanSchools,
 } from './social.js?v=30';
-import { OnlineBattleClient } from './onlineAdapter.js';
+import { OnlineBattleClient } from './onlineAdapter.js?v=2';
 
 const canvas = document.getElementById('gameCanvas');
 const renderer = new GameRenderer(canvas);
@@ -58,6 +58,7 @@ const ui = {
   shellDescText: document.getElementById('shellDescText'),
   shellBtns: Array.from(document.querySelectorAll('.shell-btn')),
   skillBtns: Array.from(document.querySelectorAll('.skill-chip')),
+  onlineSkillNote: document.getElementById('onlineSkillNote'),
   ultBtn: document.getElementById('ultBtn'),
   ultPctText: document.getElementById('ultPctText'),
   angleMinusBtn: document.getElementById('angleMinusBtn'),
@@ -134,6 +135,8 @@ const ui = {
   closeRewardAdBtn: document.getElementById('closeRewardAdBtn'),
   googleAdContainer: document.querySelector('#googleAdFooterSlot .google-ad-container'),
 
+  battleRoster: document.getElementById('battleRoster'),
+  bottomHpHud: document.getElementById('bottomHpHud'),
   hudLeftAvatar: document.getElementById('hudLeftAvatar'),
   hudLeftName: document.getElementById('hudLeftName'),
   hudLeftHp: document.getElementById('hudLeftHp'),
@@ -211,6 +214,44 @@ function scheduleAlertCleanup() {
   }, 3050);
 }
 
+function syncBattleRoster(carts, activeActor, phase) {
+  const showRoster = carts.length > 2;
+  ui.bottomHpHud.classList.toggle('has-roster', showRoster);
+  if (!showRoster) return;
+
+  const roster = ui.battleRoster;
+  const hasTeams = new Set(carts.map(cart => cart.teamId)).size < carts.length;
+  if (roster.children.length !== carts.length) {
+    roster.replaceChildren();
+    for (let index = 0; index < carts.length; index++) {
+      const card = document.createElement('div');
+      card.className = 'roster-card';
+      card.setAttribute('role', 'listitem');
+      card.innerHTML = '<div><b class="roster-seat"></b><span class="roster-name"></span></div>' +
+        '<div><progress aria-label="체력"></progress><b class="roster-hp"></b></div>';
+      roster.appendChild(card);
+    }
+  }
+  for (const [index, cart] of carts.entries()) {
+    const card = roster.children[index];
+    const seat = `${index + 1}P`;
+    const team = hasTeams ? (cart.teamId === 1 ? 'A팀 ' : 'B팀 ') : '';
+    const current = phase !== 'GAME_OVER' && cart.alive && cart === activeActor;
+    card.classList.toggle('is-current', current);
+    card.classList.toggle('is-out', !cart.alive);
+    card.dataset.team = String(cart.teamId);
+    card.querySelector('.roster-seat').textContent = team + seat;
+    card.querySelector('.roster-name').textContent = engine.isRemoteMatch ? cart.displayName : cart.spec.name;
+    const hp = Math.max(0, Math.ceil(cart.hp));
+    const gauge = card.querySelector('progress');
+    gauge.max = Math.max(1, cart.maxHp);
+    gauge.value = hp;
+    card.querySelector('.roster-hp').textContent = cart.alive ? String(hp) : '탈락';
+    if (current) card.setAttribute('aria-current', 'true');
+    else card.removeAttribute('aria-current');
+  }
+}
+
 function syncHud(state) {
   const { turnNumber, turnTimeLeft, wind, weather, tornadoActive, phase, activeActor, carts, projectiles, winnerText, muted, rankInfo, cosmeticEnabled, matchLabel } = state;
 
@@ -229,10 +270,11 @@ function syncHud(state) {
   }
 
   // 1) 상단 중앙 플로팅 HUD (내 HP · 턴 · 상대 HP)
+  syncBattleRoster(carts, activeActor, phase);
   const myCart = carts.find((c) => c.controller === 'human') || carts[0];
   const oppCart = carts.find((c) => c !== myCart) || carts[1];
   if (myCart && ui.hudLeftName && ui.hudLeftHp) {
-    ui.hudLeftName.textContent = myCart.spec?.name || myCart.displayName;
+    ui.hudLeftName.textContent = engine.isRemoteMatch ? myCart.displayName : (myCart.spec?.name || myCart.displayName);
     const hpVal = Math.max(0, myCart.hp);
     const maxHp = Math.max(1, myCart.maxHp || 120);
     ui.hudLeftHp.textContent = `${hpVal}`;
@@ -244,7 +286,7 @@ function syncHud(state) {
     }
   }
   if (oppCart && ui.hudRightName && ui.hudRightHp) {
-    ui.hudRightName.textContent = oppCart.spec?.name || oppCart.displayName;
+    ui.hudRightName.textContent = engine.isRemoteMatch ? oppCart.displayName : (oppCart.spec?.name || oppCart.displayName);
     const hpVal = Math.max(0, oppCart.hp);
     const maxHp = Math.max(1, oppCart.maxHp || 120);
     ui.hudRightHp.textContent = `${hpVal}`;
@@ -257,8 +299,9 @@ function syncHud(state) {
   }
   const timerText = phase === 'AIM' && Number.isFinite(turnTimeLeft) ? ` · ⏱ ${turnTimeLeft}초` : '';
   const compactHud = window.innerHeight <= 540;
-  ui.turnTimelineBadge.textContent =
-    matchLabel && !compactHud ? `${matchLabel} · T${turnNumber}${timerText}` : `T${turnNumber}${timerText}`;
+  const currentSeat = carts.indexOf(activeActor);
+  const turnOwner = phase === 'AIM' && currentSeat >= 0 ? `${currentSeat + 1}P 차례 · ` : '';
+  ui.turnTimelineBadge.textContent = `${matchLabel && !compactHud ? matchLabel + ' · ' : ''}${turnOwner}T${turnNumber}${timerText}`;
   ui.turnTimelineBadge.classList.toggle('urgent', phase === 'AIM' && turnTimeLeft <= 5);
   ui.turnTimelineBadge.style.color = '';
 
@@ -283,6 +326,8 @@ function syncHud(state) {
 
   ui.muteBtn.textContent = muted ? '🔇' : '🔊';
 
+  ui.weatherToggleBtn.disabled = engine.isRemoteMatch;
+  ui.weatherToggleBtn.title = engine.isRemoteMatch ? '온라인 대전 날씨는 서버에서 정합니다' : '날씨 전환';
   if (weather === 'RAIN') {
     ui.weatherToggleBtn.textContent = '🌧️ 비(바람+50%)';
     ui.weatherToggleBtn.classList.add('rain');
@@ -381,7 +426,7 @@ function syncHud(state) {
   if (phase === 'GAME_OVER') {
     if (!matchOutcomeRecorded) {
       matchOutcomeRecorded = true;
-      recordCurrentMatchOutcome(state);
+      recordCurrentMatchOutcome();
     }
     const rk = engine.getRankInfo?.()?.current;
     const rankTxt = rk ? `${rk.badge} Lv.${rk.level} ${rk.title}` : '';
@@ -467,7 +512,9 @@ function syncHud(state) {
       btn.classList.toggle('active', !refActor.useUltimate && btn.dataset.shell === refActor.selectedShell);
     }
 
+    ui.onlineSkillNote.classList.toggle('hidden', !engine.isRemoteMatch);
     for (const btn of ui.skillBtns) {
+      btn.disabled = !humanTurn || (engine.isRemoteMatch && btn.dataset.skill !== 'NORMAL');
       btn.classList.toggle('active', !refActor.useUltimate && btn.dataset.skill === refActor.skillMode);
     }
 
@@ -611,6 +658,7 @@ ui.petMagnifierCanvas?.addEventListener('pointerup', releasePetPinch);
 ui.petMagnifierCanvas?.addEventListener('pointercancel', releasePetPinch);
 
 canvas.addEventListener('pointerdown', (e) => {
+  if (!e.isPrimary || e.button !== 0 || pointerAnchor) return;
   engine.audio.ensureContext();
   const pt = toWorldCoords(e.clientX, e.clientY);
 
@@ -628,7 +676,10 @@ canvas.addEventListener('pointerdown', (e) => {
   } catch {
     // ignore pointer capture errors
   }
-  pointerAnchor = { ...pt, clientX: e.clientX, clientY: e.clientY };
+  pointerAnchor = {
+    ...pt, clientX: e.clientX, clientY: e.clientY, pointerId: e.pointerId,
+    actor: engine.activeActor, turn: engine.turnNumber,
+  };
 
   const muzzle = engine.activeActor.getMuzzlePosition();
   engine.dragState.active = true;
@@ -637,7 +688,8 @@ canvas.addEventListener('pointerdown', (e) => {
 });
 
 canvas.addEventListener('pointermove', (e) => {
-  if (!pointerAnchor || !engine.dragState.active || engine.phase !== 'AIM') return;
+  if (pointerAnchor?.pointerId !== e.pointerId || !engine.dragState.active ||
+      engine.phase !== 'AIM' || pointerAnchor.actor !== engine.activeActor || pointerAnchor.turn !== engine.turnNumber) return;
   const actor = engine.activeActor;
   if (!actor || actor.controller !== 'human') return;
 
@@ -662,7 +714,11 @@ canvas.addEventListener('pointermove', (e) => {
 });
 
 function endPointerDrag(e) {
-  if (!pointerAnchor || !engine.dragState.active) return;
+  if (pointerAnchor?.pointerId !== e.pointerId) return;
+  if (!engine.dragState.active || pointerAnchor.actor !== engine.activeActor || pointerAnchor.turn !== engine.turnNumber) {
+    cancelAimDrag();
+    return;
+  }
   const pt = toWorldCoords(e.clientX, e.clientY);
   const pullDist = Math.hypot(pointerAnchor.x - pt.x, pointerAnchor.y - pt.y);
   const screenPull = Math.hypot(pointerAnchor.clientX - e.clientX, pointerAnchor.clientY - e.clientY);
@@ -679,9 +735,20 @@ function endPointerDrag(e) {
 }
 
 canvas.addEventListener('pointerup', endPointerDrag);
-canvas.addEventListener('pointercancel', () => {
+function cancelAimDrag(e) {
+  if (!pointerAnchor || (e && e.pointerId !== pointerAnchor.pointerId)) return;
   pointerAnchor = null;
   engine.dragState.active = false;
+}
+canvas.addEventListener('pointercancel', cancelAimDrag);
+canvas.addEventListener('lostpointercapture', cancelAimDrag);
+function clearBattleInput() {
+  heldKeys.clear();
+  cancelAimDrag();
+}
+window.addEventListener('blur', clearBattleInput);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) clearBattleInput();
 });
 
 // --- UI 버튼 이벤트 바인딩 ---
@@ -874,14 +941,13 @@ async function syncProfileWithServer(prof) {
   try { await sync; } finally { pendingAccountSyncs.delete(sync); }
 }
 
-async function recordCurrentMatchOutcome(state) {
-  const carts = Array.isArray(state?.carts) ? state.carts : [];
-  const aliveHumans = carts.filter((c) => c.alive && c.controller === 'human');
-  const won = aliveHumans.length > 0;
+async function recordCurrentMatchOutcome() {
+  const won = engine.didLocalPlayerWin();
 
   // 1) 로컬·온라인 공통: 승리할 때마다 경험치 획득 & 계급 시스템 즉시 반영
   const xpGain = engine.isRemoteMatch ? (won ? 120 : 35) : (won ? 100 : 25);
-  engine.grantXp?.(xpGain, won ? '승리 보너스' : '참가 보너스');
+  const roomReceipt = engine.isRemoteMatch ? `${onlineClient.roomId}:${onlineClient.slot}` : null;
+  engine.grantXp(xpGain, won ? '승리 보너스' : '참가 보너스', roomReceipt);
 
   const prof = loadUserProfile();
   if (!prof?.userId) return;
@@ -893,10 +959,8 @@ async function recordCurrentMatchOutcome(state) {
         const acc = await onlineClient.fetchMyAccount();
         if (acc) {
           saveCachedAccountStats(prof.userId, { wins: acc.wins, matches: acc.matches, score: acc.score });
-          if (typeof acc.xp === 'number' && acc.xp > engine.xp) {
-            engine.xp = acc.xp;
-            localStorage.setItem('puffpuff_xp', String(engine.xp));
-            engine.notifyHud?.();
+          if (Number.isFinite(acc.xp) && acc.xp > engine.playerXp) {
+            engine.grantXp(acc.xp - engine.playerXp);
           }
           refreshProfileUi();
           refreshLeaderboard?.(true);
@@ -1333,11 +1397,18 @@ function enterGameFromLobby() {
 }
 
 function returnToLobby() {
+  clearBattleInput();
   onlineMatchEntered = false;
   onlineClient.clearSession();
   engine.isRemoteMatch = false;
   engine.phase = 'IDLE';
   engine.projectiles = [];
+  finishedOnlineRoom = null;
+  ui.restartBtn.disabled = false;
+  ui.restartBtn.title = '새 판 리셋';
+  ui.backToLobbyBtn.textContent = '로비';
+  ui.modalRestartBtn.textContent = '다시 하기';
+  document.getElementById('onlineConnectionStatus')?.remove();
   ui.gameOverModal?.classList.add('hidden');
   ui.onlineRoomStatusBox?.classList.add('hidden');
   ui.partyRoomModal?.classList.add('hidden');
@@ -1509,7 +1580,20 @@ ui.backToLobbyBtn.addEventListener('click', returnToLobby);
 ui.modalLobbyBtn.addEventListener('click', returnToLobby);
 
 ui.restartBtn.addEventListener('click', restartWithCurrentOptions);
-ui.modalRestartBtn.addEventListener('click', restartWithCurrentOptions);
+ui.modalRestartBtn.addEventListener('click', () => {
+  if (!engine.isRemoteMatch) return restartWithCurrentOptions();
+  const room = finishedOnlineRoom;
+  const host = onlineClient.slot === 0;
+  returnToLobby();
+  if (host && room) {
+    switchSocialHub(room.scope === 'all' ? 'friend' : 'school');
+    createOnlineRoom(room.scope, room);
+  } else {
+    switchSocialHub('friend');
+    ui.onlineInviteInput.value = '';
+    ui.onlineInviteInput.focus();
+  }
+});
 ui.modeSelect.addEventListener('change', () => {
   activeCustomMatch = null;
   restartWithCurrentOptions();
@@ -1637,6 +1721,7 @@ function enterLoginOrLobbyAfterAd() {
 
 // --- 실시간 온라인 방 대전 (/api/battle/*) 바인딩 & 재접속 ---
 let onlineMatchEntered = false;
+let finishedOnlineRoom = null;
 let lastPartyModalSig = '';
 
 function escapePartyHtml(str) {
@@ -1813,6 +1898,10 @@ function handleOnlineRoomState(res) {
     ui.partyRoomModal?.classList.add('hidden');
     engine.isRemoteMatch = true;
     if (!onlineMatchEntered) {
+      finishedOnlineRoom = null;
+      ui.restartBtn.disabled = true;
+      ui.restartBtn.title = '진행 중인 온라인 대전';
+      ui.backToLobbyBtn.textContent = '기권 · 로비';
       onlineMatchEntered = true;
       window.AndroidBridge?.setOrientation?.('landscape');
       engine.audio.startBattleBgm(res.snapshot.mapKey);
@@ -1820,6 +1909,18 @@ function handleOnlineRoomState(res) {
       ui.profileModal?.classList.add('hidden');
       ui.lobbyScreen.classList.add('hidden');
       ui.gameScreen.classList.remove('hidden');
+    }
+    if (res.status === 'FINISHED') {
+      finishedOnlineRoom = {
+        scope: res.scope || 'all',
+        roomTitle: res.roomTitle,
+        maxPlayers: res.maxPlayers || res.snapshot.carts.length,
+        mapPreset: res.snapshot.mapKey,
+        charKey: res.snapshot.carts[onlineClient.slot]?.charKey || ui.charSelect.value,
+      };
+      ui.modalRestartBtn.textContent = onlineClient.slot === 0 ? '새 온라인 방 만들기' : '새 초대 코드로 입장';
+      ui.backToLobbyBtn.textContent = '로비';
+      onlineClient.stopPolling();
     }
     onlineClient.applySnapshotToEngine(engine, res.snapshot);
   }
@@ -1836,71 +1937,34 @@ ui.cancelOnlineRoomBtn?.addEventListener('click', () => {
   refreshLanOpenRooms();
 });
 
-ui.createOnlineRoomBtn?.addEventListener('click', async () => {
+async function createOnlineRoom(scope, previous = {}) {
   onlineMatchEntered = false;
   lastPartyModalSig = '';
   const prof = getSafeProfile();
-  const roomTitle = (ui.onlineRoomTitleInput?.value || '').trim();
-  const maxPlayers = Number(ui.onlineMaxPlayers?.value || 2);
+  const isClass = scope !== 'all';
+  const titleInput = isClass ? ui.schoolRoomTitleInput : ui.onlineRoomTitleInput;
+  const sizeInput = isClass ? ui.schoolOnlineMaxPlayers : ui.onlineMaxPlayers;
+  const roomTitle = previous.roomTitle || titleInput.value.trim();
+  const maxPlayers = previous.maxPlayers || Number(sizeInput.value);
+  const charKey = previous.charKey || ui.charSelect.value;
   try {
     const res = await onlineClient.createRoom({
-      mapPreset: ui.mapSelect.value,
-      charKey: ui.charSelect.value,
-      name: prof.nickname,
-      roomTitle,
-      maxPlayers,
-      schoolName: prof.schoolName || '',
-      className: prof.className || '',
-      scope: 'all',
+      mapPreset: previous.mapPreset || ui.mapSelect.value,
+      charKey, name: prof.nickname, roomTitle, maxPlayers,
+      schoolName: prof.schoolName || '', className: prof.className || '', scope,
     });
-    ui.onlineRoomStatusBox?.classList.remove('hidden');
-    ui.onlineRoomStatusText.textContent = `방 생성 완료! 초대 코드: ${res.inviteCode}`;
-    renderPartyRoomModal({
-      status: 'WAITING_GUEST',
-      inviteCode: res.inviteCode,
-      roomTitle: res.roomTitle || roomTitle,
-      maxPlayers: res.maxPlayers || maxPlayers,
-      players: [{ slot: 0, name: prof.nickname, charKey: ui.charSelect.value }],
+    handleOnlineRoomState({
+      ...res, roomTitle, players: [{ slot: 0, name: prof.nickname, charKey }],
     });
     onlineClient.startPolling(handleOnlineRoomState, 65);
   } catch (err) {
     ui.onlineRoomStatusBox?.classList.remove('hidden');
     ui.onlineRoomStatusText.textContent = `방 생성 오류: ${err.message}`;
   }
-});
+}
 
-ui.createClassOnlineRoomBtn?.addEventListener('click', async () => {
-  onlineMatchEntered = false;
-  lastPartyModalSig = '';
-  const prof = getSafeProfile();
-  const roomTitle = (ui.schoolRoomTitleInput?.value || '').trim();
-  const maxPlayers = Number(ui.schoolOnlineMaxPlayers?.value || 2);
-  try {
-    const res = await onlineClient.createRoom({
-      mapPreset: ui.mapSelect.value,
-      charKey: ui.charSelect.value,
-      name: prof.nickname,
-      roomTitle,
-      maxPlayers,
-      schoolName: prof.schoolName || '',
-      className: prof.className || '',
-      scope: 'class',
-    });
-    ui.onlineRoomStatusBox?.classList.remove('hidden');
-    ui.onlineRoomStatusText.textContent = `🎓 [${shortSchoolLabel(prof.schoolName)} ${prof.className}] 반 대전 방 생성! 코드: ${res.inviteCode}`;
-    renderPartyRoomModal({
-      status: 'WAITING_GUEST',
-      inviteCode: res.inviteCode,
-      roomTitle: res.roomTitle || roomTitle || `${shortSchoolLabel(prof.schoolName)} ${prof.className} 반 대전`,
-      maxPlayers: res.maxPlayers || maxPlayers,
-      players: [{ slot: 0, name: prof.nickname, charKey: ui.charSelect.value }],
-    });
-    onlineClient.startPolling(handleOnlineRoomState, 65);
-  } catch (err) {
-    ui.onlineRoomStatusBox?.classList.remove('hidden');
-    ui.onlineRoomStatusText.textContent = `방 생성 오류: ${err.message}`;
-  }
-});
+ui.createOnlineRoomBtn?.addEventListener('click', () => createOnlineRoom('all'));
+ui.createClassOnlineRoomBtn?.addEventListener('click', () => createOnlineRoom('class'));
 
 ui.joinOnlineRoomBtn?.addEventListener('click', async () => {
   onlineMatchEntered = false;
@@ -2131,22 +2195,8 @@ async function refreshLeaderboard(force = false) {
 refreshLeaderboard(true);
 setInterval(() => refreshLeaderboard(false), 5000);
 
-// 새로고침 후 진행 중인 온라인 대전 세션이 있으면 자동 재접속
-(async () => {
-  const saved = onlineClient.loadSession();
-  if (!saved) return;
-  try {
-    const st = await onlineClient.fetchState();
-    if (st && (st.status === 'ACTIVE' || st.status === 'WAITING_GUEST' || st.status === 'WAITING_APPROVAL')) {
-      handleOnlineRoomState(st);
-      onlineClient.startPolling(handleOnlineRoomState, 65);
-    } else {
-      onlineClient.clearSession();
-    }
-  } catch {
-    onlineClient.clearSession();
-  }
-})();
+// Restore the same room after navigation. Polling already retries temporary network failures.
+if (onlineClient.loadSession()) onlineClient.startPolling(handleOnlineRoomState, 65);
 
 // 실제 광고 SDK가 준비되기 전에는 광고 없이 바로 로비로 진입합니다.
 enterLoginOrLobbyAfterAd();
@@ -2168,11 +2218,11 @@ ui.muteBtn.addEventListener('click', () => {
 });
 
 ui.weatherToggleBtn.addEventListener('click', () => {
-  engine.setWeather(engine.weather === 'RAIN' ? 'CLEAR' : 'RAIN');
+  if (!engine.isRemoteMatch) engine.setWeather(engine.weather === 'RAIN' ? 'CLEAR' : 'RAIN');
 });
 
 ui.tornadoTestBtn.addEventListener('click', () => {
-  engine.spawnTornado(engine.activeActor);
+  if (!engine.isRemoteMatch) engine.spawnTornado(engine.activeActor);
 });
 
 ui.rankBadgeBtn.addEventListener('click', () => {
@@ -2181,6 +2231,7 @@ ui.rankBadgeBtn.addEventListener('click', () => {
 
 // --- 키보드 단축키 바인딩 ---
 window.addEventListener('keydown', (e) => {
+  if (ui.gameScreen.classList.contains('hidden') || engine.phase === 'GAME_OVER' || e.isComposing) return;
   if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
     e.preventDefault();
   }
@@ -2192,15 +2243,17 @@ window.addEventListener('keydown', (e) => {
     handlePrimaryAction();
   } else if (e.code === 'Digit1' && engine.phase === 'AIM' && engine.activeActor?.controller === 'human') {
     engine.activeActor.selectedShell = 'ACORN_SPLIT';
+    engine.activeActor.useUltimate = false;
     engine.notifyHud();
   } else if (e.code === 'Digit2' && engine.phase === 'AIM' && engine.activeActor?.controller === 'human') {
     engine.activeActor.selectedShell = 'AQUA_DRILL';
+    engine.activeActor.useUltimate = false;
     engine.notifyHud();
   } else if (e.code === 'Digit3' && engine.phase === 'AIM' && engine.activeActor?.controller === 'human') {
     engine.activeActor.selectedShell = 'CHEESE_BOUNCE';
     engine.activeActor.useUltimate = false;
     engine.notifyHud();
-  } else if (e.code === 'KeyQ' && engine.phase === 'AIM' && engine.activeActor?.controller === 'human') {
+  } else if (e.code === 'KeyQ' && !engine.isRemoteMatch && engine.phase === 'AIM' && engine.activeActor?.controller === 'human') {
     const slots = engine.activeActor.spec.skillSlots || ['TORI_SMASH', 'TORI_DOUBLE'];
     const order = ['NORMAL', slots[0], slots[1]];
     const idx = order.indexOf(engine.activeActor.skillMode);
@@ -2293,6 +2346,4 @@ for (const tab of ui.genderTabs) {
 renderLobbyCharGrid();
 updateSelectedCharBanner(CHARACTERS[ui.charSelect.value]);
 
-// 초기 매치 구동 (백그라운드 초기화 후 로비 대기)
-restartWithCurrentOptions();
 requestAnimationFrame(gameLoop);

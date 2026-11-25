@@ -314,15 +314,26 @@ export class OnlineBattleClient {
   applySnapshotToEngine(engine, snap) {
     if (!engine || !snap) return;
 
-    if (this.initializedMapKey !== snap.mapKey) {
+    const firstSnapshot = this.initializedMapKey !== snap.mapKey;
+    if (firstSnapshot) {
       this.initializedMapKey = snap.mapKey;
       this.appliedCraterIds.clear();
       engine.mapPreset = snap.mapKey;
+      engine.matchLabel = '온라인 대전';
+      engine.projectiles = [];
       engine.terrain.generate(snap.mapKey);
+      this.waitingForMapImage = Boolean(engine.terrain.pendingImageApply);
       engine.structures.blocks = [];
       engine.particles = [];
       engine.shockwaves = [];
       engine.floatingTexts = [];
+    }
+
+    // A late map image replaces the provisional terrain mask. Restore the same holes on it.
+    const imageArrived = this.waitingForMapImage && !engine.terrain.pendingImageApply;
+    if (imageArrived) {
+      this.waitingForMapImage = false;
+      this.appliedCraterIds.clear();
     }
 
     // 1) 서버 크레이터를 로컬 빵 지형에 동기화 적용
@@ -331,6 +342,7 @@ export class OnlineBattleClient {
         if (this.appliedCraterIds.has(cr.id)) continue;
         this.appliedCraterIds.add(cr.id);
         const carved = engine.terrain.carveCrater(cr.cx, cr.cy, cr.r);
+        if (firstSnapshot || imageArrived) continue;
         const isHeavy = cr.r > 50;
         engine.spawnBurst(cr.cx, cr.cy, '#FDE68A', isHeavy ? 26 : 16, isHeavy ? 6.2 : 4.8);
         engine.renderer.addShake(isHeavy ? 20 : 13);
@@ -351,7 +363,7 @@ export class OnlineBattleClient {
 
     // 2) 캐릭터 2~3인 상태 동기화 (내 슬롯만 controller='human', 상대는 'remote')
     if (Array.isArray(snap.carts) && snap.carts.length >= 2) {
-      if (engine.carts.length !== snap.carts.length) {
+      if (firstSnapshot || engine.carts.length !== snap.carts.length) {
         engine.carts = snap.carts.map((sc, idx) => {
           const c = new CoasterCart({
             slotIndex: idx,
@@ -372,23 +384,21 @@ export class OnlineBattleClient {
         if (!local) return;
         local.controller = idx === this.slot ? 'human' : 'remote';
         // 내가 현재 조준 중인 턴에는 로컬 드래그 조작감이 튀지 않게 hp/recoil만 반영하고, 그 외엔 서버 좌표 동기화
-        const isMyAim = idx === this.slot && snap.phase === 'AIM' && snap.activeSlot === this.slot;
+        const isMyAim = !firstSnapshot && engine.turnNumber === snap.turnNumber &&
+          idx === this.slot && snap.phase === 'AIM' && snap.activeSlot === this.slot;
+        local._targetX = sc.x;
+        local._targetY = sc.y;
         if (!isMyAim) {
-          local._targetX = sc.x;
-          local._targetY = sc.y;
           local.facing = sc.facing;
           local.aimElevation = sc.aimElevation;
           local.aimPower = sc.aimPower;
           local.selectedShell = sc.selectedShell;
-        } else {
-          local._targetX = sc.x;
-          local._targetY = sc.y;
+          local.useUltimate = sc.useUltimate;
         }
         local.hp = sc.hp;
         local.maxHp = sc.maxHp;
         local.fuel = sc.fuel;
         local.ultGauge = sc.ultGauge;
-        local.useUltimate = sc.useUltimate;
         local.recoil = sc.recoil;
         local.alive = sc.alive;
       });
@@ -405,18 +415,22 @@ export class OnlineBattleClient {
     engine.fixedBoxes = snap.fixedBoxes || [];
     if (snap.skyBox) engine.skyBox = snap.skyBox;
 
-    engine.projectiles = (snap.projectiles || []).map((sp) => {
-      const p = new CapsuleProjectile({
-        ownerId: `slot_${snap.activeSlot}`,
+    const previousShots = new Map(engine.projectiles.map(p => [p.serverId, p]));
+    engine.projectiles = (snap.projectiles || []).map(sp => {
+      const projectile = previousShots.get(sp.id) || new CapsuleProjectile({
+        ownerId: `cart_${sp.ownerSlot ?? snap.activeSlot}`,
         shellKey: sp.shellKey,
-        x: sp.x,
-        y: sp.y,
-        vx: sp.vx,
-        vy: sp.vy,
+        x: sp.x, y: sp.y, vx: sp.vx, vy: sp.vy,
         isUltimate: sp.isUltimate,
       });
-      p.active = true;
-      return p;
+      projectile.serverId = sp.id;
+      projectile.x = sp.x;
+      projectile.y = sp.y;
+      projectile.vx = sp.vx;
+      projectile.vy = sp.vy;
+      projectile.ageFrames = sp.ageFrames ?? projectile.ageFrames;
+      projectile.airTriggered = sp.airTriggered ?? projectile.airTriggered;
+      return projectile;
     });
 
     engine.notifyHud();
