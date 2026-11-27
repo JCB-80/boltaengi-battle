@@ -577,29 +577,30 @@
     </div>
   </div>
 
-  <!-- 6. 2:2 친구 듀오 4자리 코드 & 초대링크 모달 -->
+  <!-- 6. 2:2 친구 듀오 실시간 서버 방 & 초대링크 모달 -->
   <div id="duoPartyModal" class="modal-backdrop hidden" role="dialog" aria-label="2:2 친구 듀오">
     <div class="modal-card">
-      <p class="modal-kicker">2:2 DUO BAKERY SIEGE</p>
-      <h2 class="modal-title">🤝 친구와 2:2 편먹기</h2>
-      <p class="modal-sub">4자리 방 코드 또는 초대 링크로 친구와 블루팀에 나란히 서세요!</p>
+      <p class="modal-kicker">REALTIME FRIEND INVITE · 2:2 DUO</p>
+      <h2 class="modal-title">🤝 친구 초대 · 실시간 대전</h2>
+      <p id="duoServerBadge" class="social-hint" style="font-weight:800; color:#38BDF8; margin:2px 0 6px;">📡 서버 연결 확인 중...</p>
       <div class="party-code-bar" style="margin:8px 0;">
         <div class="party-code-meta">
-          <span class="party-code-label">우리 팀 4자리 방 코드</span>
-          <strong id="duoCodeDisplay" class="party-code-value">4821</strong>
+          <span class="party-code-label">실시간 초대 코드</span>
+          <strong id="duoCodeDisplay" class="party-code-value">------</strong>
         </div>
         <button id="duoCopyLinkBtn" type="button" class="party-copy-btn">🔗 초대링크 복사</button>
       </div>
       <p id="duoCopyToast" class="social-hint hidden" style="color:#4ADE80;"></p>
       <div class="duo-slots-preview">
-        <div class="duo-slot-pill blue">🔵 블루 1: 나 (호스트)</div>
-        <div id="duoAllySlotName" class="duo-slot-pill blue">🔵 블루 2: 친구 대기 중</div>
+        <div class="duo-slot-pill blue">🔵 슬롯 1: 나 (호스트)</div>
+        <div id="duoAllySlotName" class="duo-slot-pill blue">🔵 슬롯 2: 친구 대기 중</div>
       </div>
       <div class="social-row" style="margin:8px 0;">
-        <input id="duoJoinInput" type="text" class="social-input" maxlength="4" placeholder="친구 방 코드 4자리 입력 (선택)" />
+        <input id="duoJoinInput" type="text" class="social-input" maxlength="8" placeholder="친구 초대 코드 입력 (예: A1B2C3)" />
+        <button id="duoJoinCodeBtn" type="button" class="social-mini-btn">입장</button>
       </div>
       <div class="modal-actions">
-        <button id="duoStartBattleBtn" type="button" class="primary-fire-btn">🚀 2:2 듀오 즉시 출격!</button>
+        <button id="duoStartBattleBtn" type="button" class="primary-fire-btn">🚀 즉시 출격!</button>
         <button id="duoCloseBtn" type="button" class="secondary-btn">닫기</button>
       </div>
     </div>
@@ -649,6 +650,6 @@
   </div>
 
   <script src="./vendor/matter.min.js"></script>
-  <script type="module" src="./src/main.js?v=56"></script>
+  <script type="module" src="./src/main.js?v=57"></script>
 </body>
 </html>

@@ -133,10 +133,11 @@ function reserveNickname(nick, myUserId, oldNick = '') {
   } catch {}
 }
 
-export function initBakeryCommercialUi({ engine, ui, launchMatchSpec, saveUserProfile, loadUserProfile }) {
+export function initBakeryCommercialUi({ engine, ui, launchMatchSpec, saveUserProfile, loadUserProfile, onlineClient = null, handleOnlineRoomState = null }) {
   let econ = loadEconomy();
   let currentShopTab = 'hats';
   let activePartyCode = '';
+  let serverOnline = false;
 
   const el = {
     loginOverlay: document.getElementById('socialLoginOverlay'),
@@ -148,8 +149,10 @@ export function initBakeryCommercialUi({ engine, ui, launchMatchSpec, saveUserPr
     duo2v2Card: document.getElementById('heroCard2v2'),
     schoolWarCard: document.getElementById('heroCardSchool'),
     duoPartyModal: document.getElementById('duoPartyModal'),
+    duoServerBadge: document.getElementById('duoServerBadge'),
     duoCodeDisplay: document.getElementById('duoCodeDisplay'),
     duoJoinInput: document.getElementById('duoJoinInput'),
+    duoJoinCodeBtn: document.getElementById('duoJoinCodeBtn'),
     duoCopyLinkBtn: document.getElementById('duoCopyLinkBtn'),
     duoCopyToast: document.getElementById('duoCopyToast'),
     duoStartBattleBtn: document.getElementById('duoStartBattleBtn'),
@@ -317,8 +320,111 @@ export function initBakeryCommercialUi({ engine, ui, launchMatchSpec, saveUserPr
     });
   });
 
-  // Card 2: 2:2 Friend Duo (4-digit party code + ?party=XXXX)
-  function openDuoPartyModal(prefillCode = '') {
+  // Card 2: Real-Time Server Friend Invite & 2:2 Duo
+  async function checkBattleServerHealth() {
+    try {
+      const res = await fetch('/api/battle/health', { cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        serverOnline = Boolean(data?.ok);
+        return serverOnline;
+      }
+    } catch {}
+    serverOnline = false;
+    return false;
+  }
+
+  async function joinServerInviteCode(rawCode) {
+    const code = String(rawCode || '').trim().toUpperCase();
+    if (!code || code.length < 4) {
+      if (el.duoCopyToast) {
+        el.duoCopyToast.style.color = '#FB7185';
+        el.duoCopyToast.textContent = '⚠️ 친구 초대 코드를 정확히 입력해 주세요!';
+        el.duoCopyToast.classList.remove('hidden');
+      }
+      return;
+    }
+    const online = await checkBattleServerHealth();
+    if (online && onlineClient && handleOnlineRoomState) {
+      const sess = loadSocialSession();
+      const myNick = sess?.nickname || '게스트볼탱';
+      const playerChar = ui.charSelect?.value || 'M01_MOCHI';
+      try {
+        await onlineClient.joinRoom({ inviteCode: code, charKey: playerChar, name: myNick });
+        el.duoPartyModal?.classList.add('hidden');
+        if (el.duoCopyToast) {
+          el.duoCopyToast.style.color = '#4ADE80';
+          el.duoCopyToast.textContent = `✅ 서버 방 [${code}] 입장 성공! 호스트 승인을 기다립니다...`;
+          el.duoCopyToast.classList.remove('hidden');
+        }
+        const st = await onlineClient.fetchState();
+        handleOnlineRoomState(st);
+        onlineClient.startPolling(handleOnlineRoomState, 65);
+        return;
+      } catch (err) {
+        if (el.duoCopyToast) {
+          el.duoCopyToast.style.color = '#FB7185';
+          el.duoCopyToast.textContent = `❌ 방 입장 실패: ${err.message}`;
+          el.duoCopyToast.classList.remove('hidden');
+        }
+        return;
+      }
+    }
+    // Static host fallback
+    activePartyCode = code;
+    if (el.duoCodeDisplay) el.duoCodeDisplay.textContent = code;
+    if (el.duoAllySlotName) el.duoAllySlotName.textContent = `초대 친구 (#${code}) 합류 완료!`;
+  }
+
+  async function openDuoPartyModal(prefillCode = '') {
+    el.duoCopyToast?.classList.add('hidden');
+    el.duoPartyModal?.classList.remove('hidden');
+    if (el.duoServerBadge) el.duoServerBadge.textContent = '📡 실시간 서버 연결 확인 중...';
+
+    const online = await checkBattleServerHealth();
+    if (online && onlineClient && handleOnlineRoomState) {
+      if (el.duoServerBadge) {
+        el.duoServerBadge.style.color = '#4ADE80';
+        el.duoServerBadge.textContent = '🟢 실시간 권위형 서버 연결됨 (/api/battle)';
+      }
+      if (prefillCode) {
+        if (el.duoJoinInput) el.duoJoinInput.value = prefillCode;
+        await joinServerInviteCode(prefillCode);
+        return;
+      }
+      const sess = loadSocialSession();
+      const myNick = sess?.nickname || '호스트볼탱';
+      const playerChar = ui.charSelect?.value || 'M01_MOCHI';
+      try {
+        const res = await onlineClient.createRoom({
+          mapPreset: ui.mapSelect?.value || 'random',
+          charKey: playerChar,
+          name: myNick,
+          roomTitle: `${myNick}의 친구 초대방`,
+          maxPlayers: 2,
+        });
+        activePartyCode = res.inviteCode;
+        if (el.duoCodeDisplay) el.duoCodeDisplay.textContent = activePartyCode;
+        if (el.duoAllySlotName) el.duoAllySlotName.textContent = '🔵 친구 입장 대기 중... (코드/링크 공유)';
+        onlineClient.startPolling((st) => {
+          if (st?.players?.length >= 2 && el.duoAllySlotName) {
+            el.duoAllySlotName.textContent = `✅ ${st.players[1].name} 입장 완료!`;
+            el.duoPartyModal?.classList.add('hidden');
+          }
+          handleOnlineRoomState(st);
+        }, 120);
+        return;
+      } catch (err) {
+        if (el.duoServerBadge) {
+          el.duoServerBadge.style.color = '#FBBF24';
+          el.duoServerBadge.textContent = `🟡 서버 방 생성 실패(${err.message}) — 로컬 AI 듀오 모드`;
+        }
+      }
+    } else if (el.duoServerBadge) {
+      el.duoServerBadge.style.color = '#FBBF24';
+      el.duoServerBadge.textContent = '🟡 정적 호스팅 모드 (AI 듀오 즉시 출격 지원)';
+    }
+
     activePartyCode = prefillCode || String(Math.floor(1000 + Math.random() * 9000));
     if (el.duoCodeDisplay) el.duoCodeDisplay.textContent = activePartyCode;
     if (el.duoJoinInput && prefillCode) el.duoJoinInput.value = prefillCode;
@@ -327,8 +433,6 @@ export function initBakeryCommercialUi({ engine, ui, launchMatchSpec, saveUserPr
         ? `초대 친구 (#${prefillCode}) 합류 완료!`
         : '단짝 친구 대기 중 (바로 출격 시 AI 파트너 합류)';
     }
-    el.duoCopyToast?.classList.add('hidden');
-    el.duoPartyModal?.classList.remove('hidden');
   }
 
   el.duo2v2Card?.addEventListener('click', () => {
@@ -336,22 +440,28 @@ export function initBakeryCommercialUi({ engine, ui, launchMatchSpec, saveUserPr
     openDuoPartyModal('');
   });
 
+  el.duoJoinCodeBtn?.addEventListener('click', () => {
+    joinServerInviteCode(el.duoJoinInput?.value || '');
+  });
+
   el.duoCopyLinkBtn?.addEventListener('click', async () => {
-    const code = (el.duoJoinInput?.value || '').trim().replace(/\D/g, '').slice(0, 4) || activePartyCode;
+    const code = (el.duoJoinInput?.value || '').trim().toUpperCase().slice(0, 8) || activePartyCode;
     const url = new URL(window.location.href);
     url.searchParams.set('party', code);
     try {
       await navigator.clipboard.writeText(url.toString());
     } catch {}
     if (el.duoCopyToast) {
-      el.duoCopyToast.textContent = `🔗 초대 링크 복사 완료! (?party=${code}) 카톡/메신저에 붙여넣기 하세요!`;
+      el.duoCopyToast.style.color = '#4ADE80';
+      el.duoCopyToast.textContent = `🔗 초대 링크 복사 완료! (?party=${code}) 친구에게 공유하세요!`;
       el.duoCopyToast.classList.remove('hidden');
     }
   });
 
   el.duoStartBattleBtn?.addEventListener('click', () => {
-    const code = (el.duoJoinInput?.value || '').trim().replace(/\D/g, '').slice(0, 4) || activePartyCode;
+    const code = (el.duoJoinInput?.value || '').trim().toUpperCase().slice(0, 8) || activePartyCode;
     el.duoPartyModal?.classList.add('hidden');
+    if (onlineClient?.roomId) onlineClient.clearSession();
     const sess = loadSocialSession();
     const myNick = sess?.nickname || '나';
     const playerChar = ui.charSelect?.value || 'M01_MOCHI';
@@ -367,12 +477,15 @@ export function initBakeryCommercialUi({ engine, ui, launchMatchSpec, saveUserPr
     });
   });
 
-  el.duoCloseBtn?.addEventListener('click', () => el.duoPartyModal?.classList.add('hidden'));
+  el.duoCloseBtn?.addEventListener('click', () => {
+    el.duoPartyModal?.classList.add('hidden');
+    if (onlineClient?.roomId) onlineClient.clearSession();
+  });
 
-  // Auto-open 2:2 Duo modal if ?party=XXXX is in URL!
+  // Auto-open Friend Invite modal if ?party=XXXX is in URL!
   const urlParty = new URLSearchParams(window.location.search).get('party');
-  if (urlParty && /^\d{4}$/.test(urlParty)) {
-    openDuoPartyModal(urlParty);
+  if (urlParty && /^[A-Za-z0-9]{4,8}$/.test(urlParty)) {
+    openDuoPartyModal(urlParty.toUpperCase());
   }
 
   // Card 3: Speed-Kill Cumulative Score Ranker Leaderboard

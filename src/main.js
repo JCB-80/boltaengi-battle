@@ -3,7 +3,7 @@ import { CHARACTERS, CHARACTER_LIST, SHELLS, SKILL_MODES, WORLD } from './config
 import { drawSpiritAvatar, drawPetMagnifierFrame } from './renderer.js?v=41';
 import { GameRenderer3D } from './renderer3d.js?v=3';
 import { GameEngine } from './gameEngine.js?v=48';
-import { initBakeryCommercialUi } from './bakeryUi.js?v=5';
+import { initBakeryCommercialUi } from './bakeryUi.js?v=6';
 import {
   loadUserProfile,
   saveUserProfile,
@@ -2306,13 +2306,15 @@ for (const tab of ui.genderTabs) {
 renderLobbyCharGrid();
 updateSelectedCharBanner(CHARACTERS[ui.charSelect.value]);
 
-// Phase 2/3 상용 UI 초기화 (4대 소셜 원클릭 로그인 · 3카드 다이어트 로비 · 2:2 듀오 · 학교 TOP 100 · Non-P2W 코스메틱 상점)
+// Phase 2/3 상용 UI 초기화 (4대 소셜 원클릭 로그인 · 3카드 다이어트 로비 · 실시간 서버 친구초대 · 누적 랭커 · Non-P2W 코스메틱 상점)
 initBakeryCommercialUi({
   engine,
   ui,
   launchMatchSpec,
   saveUserProfile,
   loadUserProfile,
+  onlineClient,
+  handleOnlineRoomState,
 });
 
 // 초기 매치 구동 (백그라운드 초기화 후 로비 대기)
