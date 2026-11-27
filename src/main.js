@@ -3,7 +3,7 @@ import { CHARACTERS, CHARACTER_LIST, SHELLS, SKILL_MODES, WORLD } from './config
 import { drawSpiritAvatar, drawPetMagnifierFrame } from './renderer.js?v=41';
 import { GameRenderer3D } from './renderer3d.js?v=3';
 import { GameEngine } from './gameEngine.js?v=48';
-import { initBakeryCommercialUi } from './bakeryUi.js?v=3';
+import { initBakeryCommercialUi } from './bakeryUi.js?v=5';
 import {
   loadUserProfile,
   saveUserProfile,

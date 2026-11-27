@@ -24,13 +24,14 @@
       <span class="brand-badge">BAKERY SIEGE · 2.5D PBR</span>
       <h1 class="lobby-title" style="margin:4px 0 0;">볼탱이 대전</h1>
       <p class="modal-sub" style="margin-bottom:8px;">3초 소셜 로그인으로 바로 시작! 빨리 잡을수록 높은 누적 스코어 랭킹!</p>
-      <label class="profile-field" style="text-align:left; margin-bottom:10px;">
-        <span>🏷️ 랭커 닉네임 (선택 · 미입력 시 자동 생성)</span>
-        <input id="socialLoginSchoolInput" type="text" maxlength="16" placeholder="예: 번지스나이퍼 (선택)" />
+      <label class="profile-field" style="text-align:left; margin-bottom:6px;">
+        <span>🏷️ 랭커 닉네임 (필수 · 2~16자)</span>
+        <input id="socialLoginSchoolInput" type="text" maxlength="16" placeholder="사용할 닉네임을 입력하세요 (예: 번지스나이퍼)" autocomplete="off" />
       </label>
+      <p id="socialLoginError" class="social-hint hidden" style="color:#FB7185; font-weight:700; margin:0 0 8px;">⚠️ 닉네임을 2자 이상 먼저 입력해 주세요!</p>
       <div class="social-oauth-stack">
         <button type="button" class="social-oauth-btn google" data-provider="google"><span>G</span> Google로 3초 시작</button>
-        <button type="button" class="social-oauth-btn apple" data-provider="apple"><span></span> Apple로 시작</button>
+        <button type="button" class="social-oauth-btn apple" data-provider="apple"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M15.96 6.33c.68-.82 1.14-1.97 1.01-3.11-.98.04-2.17.65-2.87 1.47-.62.72-1.17 1.88-1.02 3.01 1.1.08 2.21-.56 2.88-1.37z"/></svg> Apple로 시작</button>
         <button type="button" class="social-oauth-btn kakao" data-provider="kakao"><span>💬</span> 카카오로 시작</button>
         <button type="button" class="social-oauth-btn naver" data-provider="naver"><span>N</span> 네이버로 시작</button>
       </div>
@@ -648,6 +649,6 @@
   </div>
 
   <script src="./vendor/matter.min.js"></script>
-  <script type="module" src="./src/main.js?v=54"></script>
+  <script type="module" src="./src/main.js?v=56"></script>
 </body>
 </html>

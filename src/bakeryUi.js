@@ -6,6 +6,7 @@
 
 const SOCIAL_SESSION_KEY = 'boltaengi_social_session_v2';
 const ECONOMY_KEY = 'boltaengi_economy_v2';
+const TAKEN_NICKS_KEY = 'boltaengi_taken_nicknames_v1';
 
 const DEFAULT_TOP_RANKERS = [
   { name: '번지마스터_K', score: 42800, bestSec: 16, wins: 14 },
@@ -89,6 +90,46 @@ export function loadSocialSession() {
 function saveSocialSession(session) {
   try {
     localStorage.setItem(SOCIAL_SESSION_KEY, JSON.stringify(session));
+  } catch {}
+}
+
+function normalizeNick(nick) {
+  return String(nick || '').trim().toLowerCase().replace(/\s+/g, '');
+}
+
+function getTakenNickMap() {
+  const map = {};
+  for (const r of DEFAULT_TOP_RANKERS) {
+    map[normalizeNick(r.name)] = 'system_ranker';
+  }
+  try {
+    const saved = JSON.parse(localStorage.getItem(TAKEN_NICKS_KEY) || '{}');
+    if (saved && typeof saved === 'object') {
+      Object.assign(map, saved);
+    }
+  } catch {}
+  return map;
+}
+
+function isNicknameTaken(nick, myUserId = '') {
+  const key = normalizeNick(nick);
+  if (!key) return false;
+  const map = getTakenNickMap();
+  const owner = map[key];
+  return Boolean(owner && owner !== myUserId);
+}
+
+function reserveNickname(nick, myUserId, oldNick = '') {
+  const key = normalizeNick(nick);
+  if (!key || !myUserId) return;
+  try {
+    const saved = JSON.parse(localStorage.getItem(TAKEN_NICKS_KEY) || '{}');
+    const oldKey = normalizeNick(oldNick);
+    if (oldKey && oldKey !== key && saved[oldKey] === myUserId) {
+      delete saved[oldKey];
+    }
+    saved[key] = myUserId;
+    localStorage.setItem(TAKEN_NICKS_KEY, JSON.stringify(saved));
   } catch {}
 }
 
@@ -189,16 +230,55 @@ export function initBakeryCommercialUi({ engine, ui, launchMatchSpec, saveUserPr
     el.loginOverlay?.classList.remove('hidden');
   });
 
+  const loginErrorEl = document.getElementById('socialLoginError');
+  el.loginSchoolInput?.addEventListener('input', () => {
+    const val = (el.loginSchoolInput.value || '').trim();
+    if (!loginErrorEl) return;
+    if (val.length < 2) {
+      loginErrorEl.classList.add('hidden');
+      return;
+    }
+    if (isNicknameTaken(val)) {
+      loginErrorEl.style.color = '#FB7185';
+      loginErrorEl.textContent = '⚠️ 이미 사용 중인 랭커 닉네임입니다! 다른 닉네임을 입력해 주세요.';
+      loginErrorEl.classList.remove('hidden');
+    } else {
+      loginErrorEl.style.color = '#4ADE80';
+      loginErrorEl.textContent = '✅ 사용 가능한 랭커 닉네임입니다! 아래 로그인 방법을 눌러주세요.';
+      loginErrorEl.classList.remove('hidden');
+    }
+  });
+
   el.loginBtns.forEach((btn) => {
     btn.addEventListener('click', () => {
       const provider = btn.dataset.provider || 'google';
       const customNick = (el.loginSchoolInput?.value || '').trim().slice(0, 16);
+      if (customNick.length < 2) {
+        if (loginErrorEl) {
+          loginErrorEl.style.color = '#FB7185';
+          loginErrorEl.textContent = '⚠️ 닉네임을 2자 이상 먼저 입력한 뒤 로그인 방법을 눌러주세요!';
+          loginErrorEl.classList.remove('hidden');
+        }
+        el.loginSchoolInput?.focus();
+        return;
+      }
+      if (isNicknameTaken(customNick)) {
+        if (loginErrorEl) {
+          loginErrorEl.style.color = '#FB7185';
+          loginErrorEl.textContent = '⚠️ 이미 사용 중인 랭커 닉네임입니다! 중복되지 않는 닉네임을 입력해 주세요.';
+          loginErrorEl.classList.remove('hidden');
+        }
+        el.loginSchoolInput?.focus();
+        return;
+      }
+      loginErrorEl?.classList.add('hidden');
       const randNum = Math.floor(1000 + Math.random() * 9000);
-      const nickPrefixes = { google: '구글모찌', apple: '애플슈가', kakao: '카카오볼탱', naver: '네이버크림' };
+      const userId = `${provider}_${randNum}`;
+      reserveNickname(customNick, userId);
       const session = {
         provider,
-        userId: `${provider}_${randNum}`,
-        nickname: customNick || `${nickPrefixes[provider] || '말랑볼탱'}${randNum}`,
+        userId,
+        nickname: customNick,
         loggedInAt: Date.now(),
       };
       saveSocialSession(session);
@@ -343,8 +423,20 @@ export function initBakeryCommercialUi({ engine, ui, launchMatchSpec, saveUserPr
 
   el.schoolSaveBtn?.addEventListener('click', () => {
     const newNick = (el.schoolMyInput?.value || '').trim().slice(0, 16);
-    if (!newNick) return;
+    if (newNick.length < 2) {
+      if (el.myRankerSummaryBox) el.myRankerSummaryBox.querySelector('.sr-name').textContent = '⚠️ 닉네임은 2자 이상 입력해 주세요.';
+      return;
+    }
     const sess = loadSocialSession() || { provider: 'google', userId: 'player', nickname: newNick };
+    if (isNicknameTaken(newNick, sess.userId)) {
+      if (el.myRankerSummaryBox) {
+        const nameEl = el.myRankerSummaryBox.querySelector('.sr-name');
+        if (nameEl) nameEl.innerHTML = `<span style="color:#FB7185;">⚠️ "${newNick}"은(는) 이미 사용 중인 랭커 닉네임입니다!</span>`;
+      }
+      return;
+    }
+    const oldNick = sess.nickname || '';
+    reserveNickname(newNick, sess.userId, oldNick);
     sess.nickname = newNick;
     saveSocialSession(sess);
     applySessionToProfile(sess);
