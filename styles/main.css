@@ -3266,3 +3266,284 @@ select,
     min-width: 0 !important;
   }
 }
+
+
+/* ============================================================
+   Phase 2/3 Commercial Bakery UI (4-Social Login, 3-Card Lobby,
+   2:2 Duo Party, COPPA School TOP 100, Non-P2W Cosmetic Shop)
+   ============================================================ */
+.social-login-backdrop {
+  background: radial-gradient(circle at 50% 25%, rgba(254, 243, 199, 0.2), rgba(15, 23, 42, 0.94));
+  backdrop-filter: blur(8px);
+  z-index: 1200;
+}
+.social-login-card {
+  max-width: 420px;
+  text-align: center;
+  border: 2px solid rgba(250, 204, 21, 0.55);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+}
+.social-oauth-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: 6px;
+}
+.social-oauth-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 16px;
+  border-radius: 14px;
+  border: none;
+  font-size: 14.5px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform 0.12s ease, filter 0.15s ease;
+}
+.social-oauth-btn:hover { transform: translateY(-1px); filter: brightness(1.05); }
+.social-oauth-btn.google { background: #FFFFFF; color: #1E293B; }
+.social-oauth-btn.apple { background: #0B0F19; color: #FFFFFF; border: 1px solid rgba(255,255,255,0.22); }
+.social-oauth-btn.kakao { background: #FEE500; color: #191919; }
+.social-oauth-btn.naver { background: #03C75A; color: #FFFFFF; }
+
+.lobby-top-pills {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.coin-pill {
+  background: rgba(245, 158, 11, 0.2) !important;
+  border-color: rgba(250, 204, 21, 0.55) !important;
+  color: #FEF08A !important;
+}
+.shop-pill {
+  background: linear-gradient(135deg, rgba(236, 72, 153, 0.3), rgba(245, 158, 11, 0.3)) !important;
+  border-color: #F472B6 !important;
+  color: #FCE7F3 !important;
+  cursor: pointer;
+}
+
+/* 3-Card Diet Main Lobby */
+.hero-three-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+@media (max-width: 520px) {
+  .hero-three-cards { grid-template-columns: 1fr; }
+}
+.hero-mode-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 14px 8px;
+  border-radius: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  color: #FFFFFF;
+  cursor: pointer;
+  text-align: center;
+  transition: transform 0.14s ease, box-shadow 0.15s ease;
+}
+.hero-mode-card:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35); }
+.hero-mode-card .hero-card-ico { font-size: 24px; line-height: 1; }
+.hero-mode-card strong { font-size: 13.5px; font-weight: 800; }
+.hero-mode-card small { font-size: 10.5px; opacity: 0.9; white-space: normal; }
+.hero-mode-card.card-1v1 {
+  background: linear-gradient(145deg, #F97316, #EA580C);
+  border-color: #FDBA74;
+}
+.hero-mode-card.card-2v2 {
+  background: linear-gradient(145deg, #0EA5E9, #2563EB);
+  border-color: #7DD3FC;
+}
+.hero-mode-card.card-school {
+  background: linear-gradient(145deg, #A855F7, #EC4899);
+  border-color: #F9A8D4;
+}
+
+/* 8-Map Quick Strip */
+.map-quick-strip {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 4px 2px;
+  scrollbar-width: thin;
+}
+.map-quick-pill {
+  flex: 0 0 auto;
+  background: rgba(15, 23, 42, 0.65);
+  border: 1.5px solid rgba(148, 163, 184, 0.25);
+  color: #CBD5E1;
+  border-radius: 999px;
+  padding: 6px 11px;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.map-quick-pill.active {
+  background: rgba(250, 204, 21, 0.24);
+  border-color: #FACC15;
+  color: #FEF08A;
+}
+
+/* 2:2 Duo Party & Ghost Support */
+.duo-slots-preview {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 6px 0;
+}
+.duo-slot-pill {
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 700;
+  background: rgba(14, 165, 233, 0.18);
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  color: #E0F2FE;
+}
+.ghost-support-bar {
+  position: absolute;
+  bottom: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 35;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.88);
+  border: 2px solid #38BDF8;
+  box-shadow: 0 8px 24px rgba(56, 189, 248, 0.35);
+  color: #E0F2FE;
+  font-size: 12.5px;
+  font-weight: 800;
+}
+.ghost-btn-pill {
+  background: linear-gradient(135deg, #38BDF8, #2563EB);
+  color: #FFFFFF;
+  border: none;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+/* COPPA-Safe School TOP 100 */
+.school-top-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 250px;
+  overflow-y: auto;
+  margin-top: 6px;
+}
+.school-rank-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  font-size: 12.5px;
+}
+.school-rank-row.mine {
+  background: rgba(250, 204, 21, 0.18);
+  border-color: rgba(250, 204, 21, 0.55);
+}
+.sr-rank { font-weight: 800; min-width: 34px; }
+.sr-name { flex: 1; text-align: left; font-weight: 700; }
+.sr-me-tag {
+  font-style: normal;
+  font-size: 10px;
+  background: #FACC15;
+  color: #1E293B;
+  padding: 2px 6px;
+  border-radius: 999px;
+  margin-left: 4px;
+}
+.sr-score { font-weight: 800; color: #FDE047; }
+
+/* Non-P2W Cosmetic Shop & Golden Oven */
+.shop-modal-card { max-width: 480px; }
+.golden-oven-btn {
+  width: 100%;
+  padding: 11px 14px;
+  border-radius: 14px;
+  border: 2px solid #FDE047;
+  background: linear-gradient(135deg, #F59E0B, #EA580C);
+  color: #FFFFFF;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+  margin-top: 6px;
+}
+.golden-oven-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.shop-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin: 8px 0;
+}
+.shop-tab-btn {
+  padding: 8px 6px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: rgba(15, 23, 42, 0.6);
+  color: #CBD5E1;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.shop-tab-btn.active {
+  background: rgba(244, 114, 182, 0.24);
+  border-color: #F472B6;
+  color: #FCE7F3;
+}
+.shop-items-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.shop-item-card {
+  background: rgba(15, 23, 42, 0.62);
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 12px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+}
+.shop-item-card.equipped { border-color: #4ADE80; background: rgba(34, 197, 94, 0.14); }
+.shop-item-head { display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; }
+.shop-rarity { font-size: 10px; font-weight: 800; padding: 2px 6px; border-radius: 999px; width: fit-content; }
+.shop-rarity.rare { background: rgba(56,189,248,0.2); color: #7DD3FC; }
+.shop-rarity.epic { background: rgba(192,132,252,0.22); color: #E9D5FF; }
+.shop-rarity.legend { background: rgba(250,204,21,0.24); color: #FEF08A; }
+.shop-item-desc { margin: 0; font-size: 11px; color: #94A3B8; white-space: normal; }
+.shop-buy-btn {
+  margin-top: auto;
+  padding: 7px 10px;
+  border-radius: 9px;
+  border: none;
+  background: #334155;
+  color: #F8FAFC;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.shop-buy-btn.active { background: #22C55E; color: #052E16; }

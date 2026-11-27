@@ -281,13 +281,19 @@ export class ToyAudio {
   }
 
   /**
-   * 로비 화면용 신나는 140 BPM 베이커리 팝 배경음 (Clean-IP 자체 신디사이저)
+   * Google Flow Music / Lyria 스튜디오 마스터링 9종 BGM 엔진
+   * - 로비 + 8종 베이커리 맵별 고유 Earworm 트랙 1:1 매칭
+   * - 1.2초 부드러운 크로스페이드(Crossfade) 전환
+   * - 서든데스(마지막 30초 / 후반전) 템포 부스트(playbackRate 1.08)
+   * - 전자 비프음 BGM 폴백 완전 폐기
    */
   startLobbyBgm() {
+    this.setSuddenDeath(false);
     this.startBgm('lobby');
   }
 
   startBattleBgm(mapKey = null) {
+    this.setSuddenDeath(false);
     this.startBgm('battle', mapKey);
   }
 
@@ -299,6 +305,53 @@ export class ToyAudio {
     this.stopBgm();
   }
 
+  setSuddenDeath(active) {
+    this.suddenDeath = Boolean(active);
+    if (this.bgmAudio) {
+      try {
+        this.bgmAudio.playbackRate = this.suddenDeath ? 1.08 : 1.0;
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  playMove() {
+    // Subtle soft tick for countdown/step
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(520, now);
+    gain.gain.setValueAtTime(0.04, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.045);
+  }
+
+  _fadeAudio(el, fromVol, toVol, durationMs = 1200, onDone = null) {
+    if (!el) return;
+    const start = performance.now();
+    const step = (now) => {
+      const t = Math.min(1, (now - start) / durationMs);
+      try {
+        el.volume = Math.max(0, Math.min(1, fromVol + (toVol - fromVol) * t));
+      } catch {
+        return;
+      }
+      if (t < 1) {
+        requestAnimationFrame(step);
+      } else if (onDone) {
+        onDone();
+      }
+    };
+    requestAnimationFrame(step);
+  }
+
   startBgm(mode = 'lobby', mapKey = this.currentMapKey) {
     this.bgmMode = mode;
     if (mapKey) this.currentMapKey = mapKey;
@@ -308,7 +361,6 @@ export class ToyAudio {
       this.bgmTimer = null;
     }
 
-    // 0) 실제 CC0 MP3 배경음 우선 재생 (assets/bgm/lobby.mp3 및 8종 맵별 .mp3)
     const validMaps = new Set([
       'bridge', 'twin_peaks', 'archipelago', 'citadel',
       'matcha_cliff', 'honey_waffle', 'blueberry_tart', 'melon_soda',
@@ -316,504 +368,58 @@ export class ToyAudio {
     const trackKey = mode === 'battle'
       ? (validMaps.has(this.currentMapKey) ? this.currentMapKey : 'bridge')
       : 'lobby';
-    const mp3Url = `./assets/bgm/${trackKey}.mp3`;
-    const targetVol = mode === 'battle' ? 0.34 : 0.42;
+    const mp3Url = `./assets/bgm/${trackKey}.mp3?v=lyria1`;
+    const targetVol = mode === 'battle' ? 0.36 : 0.44;
 
-    if (typeof Audio !== 'undefined') {
-      try {
-        if (this.bgmAudio && this.bgmTrackKey === trackKey && !this.bgmAudio.paused) {
-          this.bgmAudio.volume = targetVol;
-          return;
-        }
-        if (this.bgmAudio) {
-          this.bgmAudio.pause();
-          this.bgmAudio.currentTime = 0;
-        }
-        const el = new Audio(mp3Url);
-        el.loop = true;
-        el.volume = targetVol;
-        this.bgmAudio = el;
-        this.bgmTrackKey = trackKey;
-        const p = el.play();
-        if (p && typeof p.then === 'function') {
-          p.then(() => {
-            if (this.bgmTimer) {
-              clearInterval(this.bgmTimer);
-              this.bgmTimer = null;
-            }
-          }).catch(() => {
-            // 자동재생 차단 또는 파일 미존재 시 신스 폴백 유지
-          });
-        }
+    if (typeof Audio === 'undefined') return;
+    try {
+      if (this.bgmAudio && this.bgmTrackKey === trackKey && !this.bgmAudio.paused) {
+        this._fadeAudio(this.bgmAudio, this.bgmAudio.volume, targetVol, 500);
         return;
-      } catch {
-        // fallback to WebAudio synth below
       }
+      const prevAudio = this.bgmAudio;
+      if (prevAudio) {
+        this._fadeAudio(prevAudio, prevAudio.volume, 0, 1200, () => {
+          try {
+            prevAudio.pause();
+            prevAudio.currentTime = 0;
+          } catch {}
+        });
+      }
+
+      const el = new Audio(mp3Url);
+      el.loop = true;
+      el.volume = 0.001;
+      el.playbackRate = this.suddenDeath ? 1.08 : 1.0;
+      this.bgmAudio = el;
+      this.bgmTrackKey = trackKey;
+      const p = el.play();
+      if (p && typeof p.then === 'function') {
+        p.then(() => {
+          this._fadeAudio(el, 0.001, targetVol, 1200);
+        }).catch(() => {
+          // Will resume automatically on first user gesture
+        });
+      } else {
+        this._fadeAudio(el, 0.001, targetVol, 1200);
+      }
+    } catch {
+      // ignore audio element error
     }
-
-    const ctx = this.ensureContext();
-    if (!ctx) return;
-
-    const targetGain = mode === 'battle' ? 0.32 : 0.45;
-    if (!this.bgmGain) {
-      this.bgmGain = ctx.createGain();
-      this.bgmGain.gain.setValueAtTime(targetGain, ctx.currentTime);
-      this.bgmGain.connect(ctx.destination);
-    } else {
-      this.bgmGain.gain.setTargetAtTime(targetGain, ctx.currentTime, 0.04);
-    }
-
-    this.bgmStep = 0;
-    this.battleTrackIdx = Math.floor(Math.random() * 3);
-    this.nextNoteTime = ctx.currentTime + 0.04;
-
-    const lobbyTrack = {
-      bpm: 142,
-      melody: [
-        523.25, 659.25, 783.99, 0,      880.0,  783.99, 659.25, 783.99,
-        587.33, 739.99, 783.99, 0,      987.77, 880.0,  783.99, 587.33,
-        659.25, 783.99, 880.0,  1046.5, 880.0,  783.99, 659.25, 523.25,
-        698.46, 880.0,  1046.5, 0,      987.77, 880.0,  783.99, 659.25,
-      ],
-      bass: [
-        130.81, 261.63, 130.81, 261.63, 130.81, 261.63, 164.81, 196.0,
-        196.0,  392.0,  196.0,  392.0,  196.0,  392.0,  164.81, 146.83,
-        220.0,  440.0,  220.0,  440.0,  220.0,  440.0,  196.0,  164.81,
-        174.61, 349.23, 174.61, 349.23, 196.0,  392.0,  246.94, 196.0,
-      ],
-      harm: [],
-    };
-
-    // 중독성 있는 3가지 인게임 아케이드 트랙 (루프마다 자동 교대 재생!)
-    const battleTracks = [
-      // Track 0: 달콤 슈가 대시 (144 BPM 펑키 훅)
-      {
-        bpm: 144,
-        melody: [
-          659.25, 783.99, 880.0,  0,      1046.5, 880.0,  783.99, 659.25,
-          587.33, 659.25, 783.99, 0,      880.0,  783.99, 659.25, 587.33,
-          523.25, 659.25, 783.99, 1046.5, 987.77, 880.0,  783.99, 659.25,
-          698.46, 880.0,  1046.5, 1174.66,1046.5, 880.0,  783.99, 0,
-          1046.5, 0,      880.0,  783.99, 659.25, 783.99, 880.0,  1046.5,
-          987.77, 0,      783.99, 659.25, 587.33, 659.25, 783.99, 987.77,
-          880.0,  1046.5, 1174.66,1046.5, 880.0,  783.99, 659.25, 523.25,
-          587.33, 659.25, 783.99, 880.0,  783.99, 0,      659.25, 0,
-        ],
-        bass: [
-          174.61, 349.23, 174.61, 349.23, 174.61, 349.23, 196.0,  174.61,
-          196.0,  392.0,  196.0,  392.0,  196.0,  392.0,  246.94, 196.0,
-          130.81, 261.63, 130.81, 261.63, 164.81, 329.63, 164.81, 196.0,
-          220.0,  440.0,  220.0,  440.0,  196.0,  392.0,  164.81, 146.83,
-          174.61, 349.23, 174.61, 349.23, 196.0,  392.0,  196.0,  392.0,
-          164.81, 329.63, 164.81, 329.63, 220.0,  440.0,  220.0,  196.0,
-          146.83, 293.66, 146.83, 293.66, 196.0,  392.0,  196.0,  392.0,
-          130.81, 261.63, 164.81, 196.0,  261.63, 0,      196.0,  0,
-        ],
-        harm: [329.63, 0, 440.0, 0, 523.25, 0, 440.0, 0],
-      },
-      // Track 1: 말랑볼 팡팡 카니발 (148 BPM 통통 리듬)
-      {
-        bpm: 148,
-        melody: [
-          783.99, 783.99, 880.0,  987.77, 1174.66,0,      987.77, 880.0,
-          783.99, 659.25, 587.33, 659.25, 783.99, 0,      659.25, 587.33,
-          523.25, 587.33, 659.25, 783.99, 880.0,  783.99, 659.25, 523.25,
-          587.33, 739.99, 880.0,  987.77, 880.0,  739.99, 587.33, 0,
-          1174.66,987.77, 880.0,  783.99, 880.0,  987.77, 1174.66,0,
-          1046.5, 987.77, 880.0,  783.99, 659.25, 783.99, 880.0,  0,
-          698.46, 880.0,  1046.5, 880.0,  783.99, 659.25, 587.33, 659.25,
-          783.99, 880.0,  987.77, 1174.66,1046.5, 0,      783.99, 0,
-        ],
-        bass: [
-          196.0,  392.0,  246.94, 392.0,  196.0,  392.0,  293.66, 196.0,
-          164.81, 329.63, 196.0,  329.63, 164.81, 329.63, 246.94, 164.81,
-          130.81, 261.63, 164.81, 261.63, 130.81, 261.63, 196.0,  130.81,
-          146.83, 293.66, 185.0,  293.66, 196.0,  392.0,  246.94, 196.0,
-          196.0,  392.0,  246.94, 392.0,  196.0,  392.0,  293.66, 196.0,
-          220.0,  440.0,  261.63, 440.0,  220.0,  440.0,  329.63, 220.0,
-          174.61, 349.23, 220.0,  349.23, 196.0,  392.0,  246.94, 196.0,
-          196.0,  293.66, 392.0,  293.66, 261.63, 0,      196.0,  0,
-        ],
-        harm: [392.0, 0, 493.88, 0, 587.33, 0, 493.88, 0],
-      },
-      // Track 2: 무지개 베이커리 러시 (140 BPM 애니 액션 그루브)
-      {
-        bpm: 140,
-        melody: [
-          440.0,  523.25, 659.25, 880.0,  783.99, 659.25, 587.33, 523.25,
-          440.0,  523.25, 659.25, 0,      783.99, 880.0,  987.77, 880.0,
-          698.46, 880.0,  1046.5, 0,      987.77, 880.0,  783.99, 659.25,
-          587.33, 659.25, 783.99, 880.0,  783.99, 659.25, 587.33, 0,
-          880.0,  1046.5, 1174.66,1318.51,1174.66,1046.5, 880.0,  783.99,
-          698.46, 880.0,  1046.5, 880.0,  783.99, 659.25, 587.33, 659.25,
-          523.25, 659.25, 783.99, 1046.5, 987.77, 783.99, 659.25, 587.33,
-          440.0,  523.25, 659.25, 783.99, 880.0,  0,      659.25, 0,
-        ],
-        bass: [
-          110.0,  220.0,  110.0,  220.0,  110.0,  220.0,  130.81, 164.81,
-          110.0,  220.0,  110.0,  220.0,  164.81, 329.63, 196.0,  164.81,
-          174.61, 349.23, 174.61, 349.23, 196.0,  392.0,  196.0,  164.81,
-          146.83, 293.66, 146.83, 293.66, 196.0,  392.0,  164.81, 146.83,
-          220.0,  440.0,  220.0,  440.0,  196.0,  392.0,  196.0,  392.0,
-          174.61, 349.23, 174.61, 349.23, 164.81, 329.63, 164.81, 146.83,
-          130.81, 261.63, 130.81, 261.63, 196.0,  392.0,  196.0,  164.81,
-          110.0,  220.0,  130.81, 164.81, 220.0,  0,      164.81, 0,
-        ],
-        harm: [261.63, 0, 329.63, 0, 440.0, 0, 329.63, 0],
-      },
-    ];
-
-    // 8종 맵별 고유 중독성 멜로디 · 베이스 · 아르페지오 · 음색 트랙
-    const mapTracks = {
-      // 1) bridge: Sunny Pop Arcade Hook (C Major, 146 BPM)
-      bridge: {
-        bpm: 146,
-        wave: 'square',
-        melody: [
-          659.25, 0, 783.99, 880.0, 1046.5, 0, 880.0, 783.99,
-          659.25, 783.99, 880.0, 1046.5, 1174.66, 0, 1046.5, 880.0,
-          783.99, 0, 659.25, 587.33, 523.25, 587.33, 659.25, 783.99,
-          880.0, 987.77, 1046.5, 880.0, 783.99, 0, 659.25, 0,
-          1046.5, 1046.5, 1174.66, 1318.51, 1174.66, 1046.5, 880.0, 783.99,
-          880.0, 0, 1046.5, 880.0, 783.99, 659.25, 587.33, 523.25,
-          698.46, 880.0, 1046.5, 1174.66, 1046.5, 880.0, 783.99, 659.25,
-          587.33, 659.25, 783.99, 987.77, 1046.5, 0, 783.99, 0,
-        ],
-        bass: [
-          130.81, 261.63, 130.81, 261.63, 196.0, 392.0, 196.0, 164.81,
-          220.0, 440.0, 220.0, 440.0, 174.61, 349.23, 196.0, 174.61,
-          164.81, 329.63, 164.81, 329.63, 146.83, 293.66, 196.0, 146.83,
-          130.81, 261.63, 164.81, 196.0, 261.63, 196.0, 130.81, 0,
-        ],
-        harm: [329.63, 523.25, 392.0, 659.25, 349.23, 523.25, 392.0, 587.33],
-      },
-      // 2) twin_peaks: Crystal Bell Winter Waltz/Pop (D Major, 138 BPM)
-      twin_peaks: {
-        bpm: 138,
-        wave: 'triangle',
-        melody: [
-          1174.66, 0, 987.77, 880.0, 739.99, 880.0, 987.77, 0,
-          1174.66, 1318.51, 1479.98, 0, 1318.51, 1174.66, 987.77, 880.0,
-          783.99, 987.77, 1174.66, 0, 987.77, 880.0, 739.99, 659.25,
-          587.33, 739.99, 880.0, 1174.66, 987.77, 0, 880.0, 0,
-          1479.98, 0, 1318.51, 1174.66, 987.77, 1174.66, 1318.51, 0,
-          1174.66, 987.77, 880.0, 739.99, 659.25, 739.99, 880.0, 987.77,
-          783.99, 987.77, 1174.66, 1318.51, 1174.66, 987.77, 880.0, 739.99,
-          659.25, 783.99, 880.0, 1108.73, 1174.66, 0, 880.0, 0,
-        ],
-        bass: [
-          146.83, 293.66, 220.0, 293.66, 185.0, 369.99, 220.0, 185.0,
-          196.0, 392.0, 246.94, 392.0, 146.83, 293.66, 220.0, 146.83,
-          164.81, 329.63, 246.94, 329.63, 220.0, 440.0, 277.18, 220.0,
-          196.0, 392.0, 220.0, 440.0, 146.83, 293.66, 146.83, 0,
-        ],
-        harm: [587.33, 739.99, 880.0, 739.99, 493.88, 659.25, 783.99, 659.25],
-      },
-      // 3) archipelago: Bouncy Candy Carnival (G Major, 152 BPM)
-      archipelago: {
-        bpm: 152,
-        wave: 'square',
-        melody: [
-          783.99, 987.77, 1174.66, 0, 1318.51, 1174.66, 987.77, 783.99,
-          880.0, 1046.5, 1174.66, 987.77, 880.0, 739.99, 659.25, 587.33,
-          783.99, 880.0, 987.77, 1174.66, 1318.51, 1479.98, 1318.51, 1174.66,
-          1046.5, 987.77, 880.0, 783.99, 739.99, 0, 587.33, 0,
-          1567.98, 0, 1318.51, 1174.66, 987.77, 1046.5, 1174.66, 0,
-          1318.51, 1174.66, 1046.5, 987.77, 880.0, 987.77, 1046.5, 0,
-          783.99, 987.77, 1174.66, 1318.51, 1174.66, 987.77, 880.0, 739.99,
-          783.99, 987.77, 1174.66, 1479.98, 1567.98, 0, 1174.66, 0,
-        ],
-        bass: [
-          196.0, 392.0, 246.94, 392.0, 164.81, 329.63, 246.94, 196.0,
-          130.81, 261.63, 196.0, 261.63, 146.83, 293.66, 220.0, 146.83,
-          196.0, 392.0, 246.94, 392.0, 220.0, 440.0, 261.63, 220.0,
-          174.61, 349.23, 196.0, 392.0, 196.0, 293.66, 196.0, 0,
-        ],
-        harm: [392.0, 493.88, 587.33, 493.88, 523.25, 659.25, 587.33, 493.88],
-      },
-      // 4) citadel: Boss Volcano Electro-Rock (E Minor, 156 BPM)
-      citadel: {
-        bpm: 156,
-        wave: 'sawtooth',
-        melody: [
-          659.25, 0, 659.25, 783.99, 987.77, 0, 880.0, 783.99,
-          659.25, 783.99, 880.0, 987.77, 1046.5, 987.77, 880.0, 783.99,
-          587.33, 0, 587.33, 739.99, 880.0, 0, 783.99, 739.99,
-          659.25, 587.33, 493.88, 587.33, 659.25, 0, 493.88, 0,
-          1318.51, 0, 1174.66, 987.77, 1046.5, 987.77, 880.0, 783.99,
-          987.77, 0, 880.0, 783.99, 739.99, 783.99, 880.0, 987.77,
-          659.25, 783.99, 987.77, 1318.51, 1174.66, 987.77, 880.0, 739.99,
-          659.25, 783.99, 987.77, 1174.66, 1318.51, 0, 987.77, 0,
-        ],
-        bass: [
-          164.81, 164.81, 329.63, 164.81, 164.81, 164.81, 246.94, 196.0,
-          130.81, 130.81, 261.63, 130.81, 146.83, 146.83, 293.66, 146.83,
-          164.81, 164.81, 329.63, 164.81, 196.0, 196.0, 392.0, 196.0,
-          123.47, 123.47, 246.94, 146.83, 164.81, 246.94, 164.81, 0,
-        ],
-        harm: [329.63, 392.0, 493.88, 392.0, 293.66, 369.99, 440.0, 369.99],
-      },
-      // 5) matcha_cliff: Breezy Pentatonic Tea Garden (D Pentatonic, 136 BPM)
-      matcha_cliff: {
-        bpm: 136,
-        wave: 'triangle',
-        melody: [
-          587.33, 659.25, 880.0, 0, 987.77, 880.0, 659.25, 587.33,
-          659.25, 880.0, 1174.66, 0, 987.77, 880.0, 659.25, 0,
-          880.0, 987.77, 1174.66, 1318.51, 1174.66, 987.77, 880.0, 659.25,
-          587.33, 659.25, 880.0, 987.77, 880.0, 0, 659.25, 0,
-          1174.66, 0, 1318.51, 1174.66, 987.77, 880.0, 987.77, 1174.66,
-          880.0, 0, 659.25, 587.33, 659.25, 880.0, 987.77, 0,
-          1174.66, 987.77, 880.0, 659.25, 587.33, 659.25, 880.0, 1174.66,
-          987.77, 880.0, 659.25, 587.33, 587.33, 0, 880.0, 0,
-        ],
-        bass: [
-          146.83, 293.66, 220.0, 293.66, 196.0, 392.0, 220.0, 196.0,
-          164.81, 329.63, 220.0, 329.63, 146.83, 293.66, 220.0, 146.83,
-          196.0, 392.0, 293.66, 392.0, 220.0, 440.0, 293.66, 220.0,
-          146.83, 220.0, 293.66, 220.0, 146.83, 293.66, 146.83, 0,
-        ],
-        harm: [440.0, 587.33, 659.25, 587.33, 493.88, 659.25, 880.0, 659.25],
-      },
-      // 6) honey_waffle: Funky Cafe Groove (F Major7, 146 BPM)
-      honey_waffle: {
-        bpm: 146,
-        wave: 'square',
-        melody: [
-          698.46, 0, 880.0, 1046.5, 0, 1318.51, 1174.66, 1046.5,
-          880.0, 1046.5, 1174.66, 0, 1046.5, 880.0, 783.99, 698.46,
-          783.99, 880.0, 1046.5, 1174.66, 1396.91, 0, 1318.51, 1046.5,
-          880.0, 783.99, 698.46, 783.99, 880.0, 0, 698.46, 0,
-          1396.91, 1318.51, 1174.66, 1046.5, 1174.66, 1318.51, 1396.91, 0,
-          1174.66, 1046.5, 880.0, 783.99, 698.46, 783.99, 880.0, 1046.5,
-          783.99, 880.0, 1046.5, 1318.51, 1174.66, 1046.5, 880.0, 783.99,
-          698.46, 880.0, 1046.5, 1318.51, 1396.91, 0, 1046.5, 0,
-        ],
-        bass: [
-          174.61, 349.23, 220.0, 261.63, 196.0, 392.0, 261.63, 196.0,
-          164.81, 329.63, 220.0, 329.63, 146.83, 293.66, 220.0, 146.83,
-          116.54, 233.08, 174.61, 233.08, 130.81, 261.63, 196.0, 130.81,
-          174.61, 220.0, 261.63, 196.0, 174.61, 349.23, 174.61, 0,
-        ],
-        harm: [440.0, 523.25, 659.25, 523.25, 392.0, 523.25, 587.33, 523.25],
-      },
-      // 7) blueberry_tart: Dreamy Anime Synthwave (A Minor -> C Major, 140 BPM)
-      blueberry_tart: {
-        bpm: 140,
-        wave: 'triangle',
-        melody: [
-          880.0, 0, 1046.5, 1174.66, 1318.51, 0, 1174.66, 1046.5,
-          987.77, 1046.5, 1174.66, 0, 880.0, 783.99, 659.25, 587.33,
-          698.46, 880.0, 1046.5, 1318.51, 1174.66, 1046.5, 987.77, 880.0,
-          783.99, 880.0, 987.77, 1174.66, 1046.5, 0, 880.0, 0,
-          1318.51, 1396.91, 1567.98, 0, 1318.51, 1174.66, 1046.5, 880.0,
-          1046.5, 1174.66, 1318.51, 1174.66, 1046.5, 987.77, 880.0, 783.99,
-          698.46, 880.0, 1046.5, 1318.51, 1567.98, 1318.51, 1174.66, 1046.5,
-          880.0, 987.77, 1046.5, 1318.51, 1760.0, 0, 1318.51, 0,
-        ],
-        bass: [
-          110.0, 220.0, 110.0, 220.0, 164.81, 329.63, 196.0, 164.81,
-          174.61, 349.23, 174.61, 349.23, 196.0, 392.0, 246.94, 196.0,
-          130.81, 261.63, 130.81, 261.63, 196.0, 392.0, 164.81, 146.83,
-          174.61, 349.23, 196.0, 392.0, 220.0, 440.0, 220.0, 0,
-        ],
-        harm: [523.25, 659.25, 880.0, 659.25, 440.0, 523.25, 659.25, 523.25],
-      },
-      // 8) melon_soda: Fizzy Tropical Chiptune Pop (Bb Major, 154 BPM)
-      melon_soda: {
-        bpm: 154,
-        wave: 'square',
-        melody: [
-          932.33, 1174.66, 1396.91, 0, 1567.98, 1396.91, 1174.66, 932.33,
-          1046.5, 1174.66, 1396.91, 1567.98, 1396.91, 1174.66, 1046.5, 932.33,
-          783.99, 932.33, 1046.5, 1174.66, 1396.91, 0, 1174.66, 1046.5,
-          932.33, 783.99, 698.46, 783.99, 932.33, 0, 698.46, 0,
-          1567.98, 1396.91, 1174.66, 1396.91, 1567.98, 1864.66, 1567.98, 1396.91,
-          1174.66, 1046.5, 932.33, 1046.5, 1174.66, 1396.91, 1567.98, 0,
-          1046.5, 1174.66, 1396.91, 1567.98, 1396.91, 1174.66, 1046.5, 932.33,
-          932.33, 1174.66, 1396.91, 1567.98, 1864.66, 0, 1396.91, 0,
-        ],
-        bass: [
-          116.54, 233.08, 174.61, 233.08, 130.81, 261.63, 196.0, 130.81,
-          146.83, 293.66, 220.0, 293.66, 155.56, 311.13, 233.08, 155.56,
-          174.61, 349.23, 261.63, 349.23, 196.0, 392.0, 293.66, 196.0,
-          155.56, 311.13, 174.61, 349.23, 116.54, 233.08, 116.54, 0,
-        ],
-        harm: [466.16, 587.33, 698.46, 587.33, 523.25, 698.46, 783.99, 698.46],
-      },
-    };
-    const activeMapTrack = mode === 'battle' ? mapTracks[this.currentMapKey] || null : null;
-
-    const getTrack = () => {
-      if (mode !== 'battle') return lobbyTrack;
-      return activeMapTrack || battleTracks[this.battleTrackIdx];
-    };
-
-    // 1) 맵별 스타일 프로파일 (장르·악기 음색·필터·드럼 리듬 차별화!)
-    const styleByMap = {
-      bridge: { filterHz: 2400, leadWave: 'triangle', subWave: 'sine', drum: 'pop' },
-      twin_peaks: { filterHz: 3200, leadWave: 'sine', subWave: 'triangle', drum: 'waltz' },
-      archipelago: { filterHz: 2800, leadWave: 'triangle', subWave: 'square', drum: 'carnival' },
-      citadel: { filterHz: 1500, leadWave: 'sawtooth', subWave: 'square', drum: 'rock' },
-      matcha_cliff: { filterHz: 2100, leadWave: 'sine', subWave: 'triangle', drum: 'zen' },
-      honey_waffle: { filterHz: 2200, leadWave: 'triangle', subWave: 'sine', drum: 'swing' },
-      blueberry_tart: { filterHz: 1850, leadWave: 'sine', subWave: 'sine', drum: 'dream' },
-      melon_soda: { filterHz: 3400, leadWave: 'square', subWave: 'triangle', drum: 'funk' },
-    };
-    const activeStyle = mode === 'battle'
-      ? (styleByMap[this.currentMapKey] || styleByMap.bridge)
-      : { filterHz: 2600, leadWave: 'triangle', subWave: 'sine', drum: 'pop' };
-
-    const scheduleStep = (stepIdx, t) => {
-      if (!this.bgmGain || this.muted || !this.bgmEnabled) return;
-      const tr = getTrack();
-      const stepDuration = 60 / tr.bpm / 2;
-      const mFreq = tr.melody[stepIdx % tr.melody.length];
-      const bFreq = tr.bass[stepIdx % tr.bass.length];
-      const hFreq = tr.harm.length ? tr.harm[stepIdx % tr.harm.length] : 0;
-
-      // 1) 부드러운 로패스 필터를 거친 맵별 리드 악기 (거친 8비트 비프음 제거)
-      if (mFreq > 0) {
-        const osc1 = ctx.createOscillator();
-        const osc2 = ctx.createOscillator();
-        const filt = ctx.createBiquadFilter();
-        const g = ctx.createGain();
-        osc1.type = activeStyle.leadWave;
-        osc2.type = activeStyle.subWave;
-        osc1.frequency.setValueAtTime(mFreq, t);
-        osc2.frequency.setValueAtTime(mFreq * (activeStyle.drum === 'rock' ? 0.5 : 1.003), t);
-        filt.type = 'lowpass';
-        filt.frequency.setValueAtTime(activeStyle.filterHz, t);
-        filt.frequency.exponentialRampToValueAtTime(Math.max(500, activeStyle.filterHz * 0.45), t + stepDuration * 0.85);
-        g.gain.setValueAtTime(0.001, t);
-        g.gain.linearRampToValueAtTime(mode === 'battle' ? 0.062 : 0.095, t + 0.012);
-        g.gain.exponentialRampToValueAtTime(0.001, t + stepDuration * 0.9);
-        osc1.connect(filt);
-        osc2.connect(filt);
-        filt.connect(g);
-        g.connect(this.bgmGain);
-        osc1.start(t);
-        osc2.start(t);
-        osc1.stop(t + stepDuration * 0.94);
-        osc2.stop(t + stepDuration * 0.94);
-      }
-
-      // 1.5) 화음 아르페지오 / 벨 레이어
-      if (hFreq > 0) {
-        const aOsc = ctx.createOscillator();
-        const aGain = ctx.createGain();
-        aOsc.type = activeStyle.drum === 'zen' || activeStyle.drum === 'dream' ? 'sine' : 'triangle';
-        aOsc.frequency.setValueAtTime(hFreq, t);
-        aGain.gain.setValueAtTime(0.038, t);
-        aGain.gain.exponentialRampToValueAtTime(0.001, t + stepDuration * 0.8);
-        aOsc.connect(aGain);
-        aGain.connect(this.bgmGain);
-        aOsc.start(t);
-        aOsc.stop(t + stepDuration * 0.85);
-      }
-
-      // 2) 바운스 베이스 (록/펑크는 살짝 펀치감, 드림/젠은 부드럽게)
-      if (bFreq > 0) {
-        const bOsc = ctx.createOscillator();
-        const bGain = ctx.createGain();
-        bOsc.type = activeStyle.drum === 'rock' || activeStyle.drum === 'funk' ? 'triangle' : 'sine';
-        bOsc.frequency.setValueAtTime(bFreq, t);
-        bGain.gain.setValueAtTime(0.095, t);
-        bGain.gain.exponentialRampToValueAtTime(0.001, t + stepDuration * 0.85);
-        bOsc.connect(bGain);
-        bGain.connect(this.bgmGain);
-        bOsc.start(t);
-        bOsc.stop(t + stepDuration * 0.9);
-      }
-
-      // 3) 맵별 고유 드럼 패턴 (왈츠 3박 / 록 스네어 / 젠 목탁 / 펑크 스윙 / 팝)
-      const drumType = activeStyle.drum;
-      const playKick =
-        drumType === 'waltz' ? stepIdx % 6 === 0 :
-        drumType === 'rock' ? (stepIdx % 4 === 0 || stepIdx % 8 === 5) :
-        drumType === 'zen' ? stepIdx % 8 === 0 :
-        stepIdx % 4 === 0;
-      const playSnare =
-        drumType === 'rock' ? stepIdx % 4 === 2 :
-        drumType === 'funk' ? (stepIdx % 4 === 2 || stepIdx % 8 === 7) :
-        drumType === 'pop' || drumType === 'carnival' ? stepIdx % 4 === 2 :
-        false;
-      const playHat =
-        drumType === 'waltz' ? (stepIdx % 6 === 2 || stepIdx % 6 === 4) :
-        drumType === 'zen' ? stepIdx % 4 === 2 :
-        stepIdx % 2 === 1;
-
-      if (playKick) {
-        const kOsc = ctx.createOscillator();
-        const kGain = ctx.createGain();
-        kOsc.type = 'sine';
-        kOsc.frequency.setValueAtTime(drumType === 'rock' ? 145 : 120, t);
-        kOsc.frequency.exponentialRampToValueAtTime(40, t + 0.09);
-        kGain.gain.setValueAtTime(drumType === 'zen' ? 0.07 : 0.115, t);
-        kGain.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
-        kOsc.connect(kGain);
-        kGain.connect(this.bgmGain);
-        kOsc.start(t);
-        kOsc.stop(t + 0.11);
-      }
-      if (playSnare) {
-        const sOsc = ctx.createOscillator();
-        const sGain = ctx.createGain();
-        sOsc.type = 'triangle';
-        sOsc.frequency.setValueAtTime(220, t);
-        sOsc.frequency.exponentialRampToValueAtTime(95, t + 0.06);
-        sGain.gain.setValueAtTime(0.06, t);
-        sGain.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
-        sOsc.connect(sGain);
-        sGain.connect(this.bgmGain);
-        sOsc.start(t);
-        sOsc.stop(t + 0.08);
-      }
-      if (playHat) {
-        const hOsc = ctx.createOscillator();
-        const hGain = ctx.createGain();
-        hOsc.type = drumType === 'zen' ? 'sine' : 'triangle';
-        hOsc.frequency.setValueAtTime(drumType === 'zen' ? 880 : 3800, t);
-        hGain.gain.setValueAtTime(drumType === 'zen' ? 0.032 : 0.014, t);
-        hGain.gain.exponentialRampToValueAtTime(0.001, t + 0.035);
-        hOsc.connect(hGain);
-        hGain.connect(this.bgmGain);
-        hOsc.start(t);
-        hOsc.stop(t + 0.04);
-      }
-    };
-
-    this.bgmTimer = setInterval(() => {
-      if (!this.ctx || this.muted || !this.bgmEnabled) return;
-      if (this.ctx.state === 'suspended') return;
-      const tr = getTrack();
-      const stepDuration = 60 / tr.bpm / 2;
-      const loopLen = tr.melody.length;
-      while (this.nextNoteTime < this.ctx.currentTime + 0.14) {
-        scheduleStep(this.bgmStep, this.nextNoteTime);
-        this.nextNoteTime += stepDuration;
-        this.bgmStep = (this.bgmStep + 1) % loopLen;
-        if (this.bgmStep === 0 && mode === 'battle' && !activeMapTrack) {
-          this.battleTrackIdx = (this.battleTrackIdx + 1) % battleTracks.length;
-        }
-      }
-    }, 35);
   }
 
   stopBgm() {
     if (this.bgmAudio) {
-      try {
-        this.bgmAudio.pause();
-      } catch {
-        // ignore
-      }
+      const dying = this.bgmAudio;
+      this.bgmAudio = null;
+      this.bgmTrackKey = '';
+      this._fadeAudio(dying, dying.volume, 0, 450, () => {
+        try { dying.pause(); } catch {}
+      });
     }
     if (this.bgmTimer) {
       clearInterval(this.bgmTimer);
       this.bgmTimer = null;
-    }
-    if (this.bgmGain && this.ctx) {
-      this.bgmGain.gain.setTargetAtTime(0.0001, this.ctx.currentTime, 0.03);
     }
   }
 

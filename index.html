@@ -7,25 +7,88 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Jua&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="./styles/main.css?v=72" />
+  <link rel="stylesheet" href="./styles/main.css?v=73" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/"
+      }
+    }
+  </script>
 </head>
 <body>
-  <!-- 1. 게임 진입 전 로비 화면 (모드 · 캐릭터 · 지형 · AI 난이도 설정) -->
+  <!-- 0. 4대 소셜 원클릭 로그인 (Google / Apple / Kakao / Naver — 수동 ID/PW · 게스트 · 학년/반 PII 완전 배제) -->
+  <div id="socialLoginOverlay" class="modal-backdrop social-login-backdrop hidden" role="dialog" aria-label="소셜 원클릭 로그인">
+    <div class="modal-card social-login-card">
+      <span class="brand-badge">BAKERY SIEGE · 2.5D PBR</span>
+      <h1 class="lobby-title" style="margin:4px 0 0;">볼탱이 대전</h1>
+      <p class="modal-sub" style="margin-bottom:8px;">3초 소셜 로그인으로 바로 시작! (학년·반·실명 미수집 COPPA 안전)</p>
+      <label class="profile-field" style="text-align:left; margin-bottom:10px;">
+        <span>🏫 내 학교 소속 (선택 · 학교 대항전용, 학년/반 입력 없음)</span>
+        <input id="socialLoginSchoolInput" type="text" maxlength="24" placeholder="예: 서울하늘초등학교 (선택)" />
+      </label>
+      <div class="social-oauth-stack">
+        <button type="button" class="social-oauth-btn google" data-provider="google"><span>G</span> Google로 3초 시작</button>
+        <button type="button" class="social-oauth-btn apple" data-provider="apple"><span></span> Apple로 시작</button>
+        <button type="button" class="social-oauth-btn kakao" data-provider="kakao"><span>💬</span> 카카오로 시작</button>
+        <button type="button" class="social-oauth-btn naver" data-provider="naver"><span>N</span> 네이버로 시작</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 1. 다이어트 3카드 메인 로비 화면 -->
   <div id="lobbyScreen" class="lobby-screen">
     <div class="lobby-card">
       <div class="lobby-header">
-        <span class="brand-badge">CLEAN-IP BAKERY SIEGE</span>
+        <span class="brand-badge">2.5D PBR · GOOGLE FLOW MUSIC</span>
         <h1 class="lobby-title">볼탱이 대전</h1>
-        <p class="lobby-sub">폭신한 빵 위에서 볼살을 당겨 쏘는 말랑 물리 공성전!</p>
-        <button id="rankBadgeBtn" type="button" class="rank-pill" title="클릭하여 계급 외형 꾸미기 ON/OFF (성능 차이 없음)">
-          🌱 Lv.1 견습 발명가 (0/100)
-        </button>
+        <p class="lobby-sub">폭신한 빵 위에서 볼살을 당겨 쏘는 3분 실시간 공성전!</p>
+        <div class="lobby-top-pills">
+          <button id="rankBadgeBtn" type="button" class="rank-pill" title="클릭하여 계급 외형 꾸미기 ON/OFF">
+            🌱 Lv.1 견습 발명가 (0/100)
+          </button>
+          <span id="coinBalancePill" class="rank-pill coin-pill">🪙 500</span>
+          <button id="openShopBtn" type="button" class="rank-pill shop-pill">🛍️ 상점 · 🎰 황금오븐</button>
+        </div>
         <div class="lobby-profile-bar">
           <span id="profileSummaryText" class="profile-summary-text">🏫 내 소속 정보를 불러오는 중...</span>
           <button id="lobbyBgmBtn" type="button" class="profile-edit-btn" title="로비 배경음 켜기/끄기">🎵 BGM</button>
           <button id="openProfileBtn" type="button" class="profile-edit-btn">✏️ 내 정보</button>
-          <a href="./privacy.html">개인정보처리방침 · 계정 삭제 안내</a>
+          <a href="./privacy.html">개인정보처리방침</a>
         </div>
+      </div>
+
+      <!-- 핵심 3카드 메인 액션 (다이어트 로비) -->
+      <div class="hero-three-cards">
+        <button id="heroCard1v1" type="button" class="hero-mode-card card-1v1">
+          <span class="hero-card-ico">🔥</span>
+          <strong>1:1 빠른 대전</strong>
+          <small>즉시 매칭 · 3분 공성전</small>
+        </button>
+        <button id="heroCard2v2" type="button" class="hero-mode-card card-2v2">
+          <span class="hero-card-ico">🤝</span>
+          <strong>친구와 2:2 팀전</strong>
+          <small>4자리 코드 · 링크 합류</small>
+        </button>
+        <button id="heroCardSchool" type="button" class="hero-mode-card card-school">
+          <span class="hero-card-ico">🏫</span>
+          <strong>전국 학교 대항전</strong>
+          <small>TOP 100 · COPPA 안전</small>
+        </button>
+      </div>
+
+      <!-- 8종 베이커리 맵 + 전용 Google Flow Music BGM 빠른 선택 -->
+      <div class="map-quick-strip" role="group" aria-label="베이커리 맵 선택">
+        <button type="button" class="map-quick-pill active" data-map="random">🎲 랜덤 맵</button>
+        <button type="button" class="map-quick-pill" data-map="bridge">🍞 버터식빵</button>
+        <button type="button" class="map-quick-pill" data-map="twin_peaks">🥐 크루아상</button>
+        <button type="button" class="map-quick-pill" data-map="archipelago">🍓 딸기케이크</button>
+        <button type="button" class="map-quick-pill" data-map="blueberry_tart">🍩 초코도넛</button>
+        <button type="button" class="map-quick-pill" data-map="melon_soda">🧁 마카롱</button>
+        <button type="button" class="map-quick-pill" data-map="honey_waffle">🧇 허니와플</button>
+        <button type="button" class="map-quick-pill" data-map="matcha_cliff">🍮 푸딩밸리</button>
+        <button type="button" class="map-quick-pill" data-map="citadel">🔥 시나몬성채</button>
       </div>
 
       <div class="lobby-char-picker">
@@ -47,7 +110,7 @@
         <input id="charSelect" type="hidden" value="M01_MOCHI" />
       </div>
 
-      <div class="lobby-social-hub">
+      <div class="lobby-social-hub hidden" aria-hidden="true">
         <div class="social-hub-tabs" role="tablist" aria-label="대전 상대 방식">
           <button type="button" class="social-tab active" data-hub="classic">🎮 기본 대전</button>
           <button type="button" class="social-tab" data-hub="friend">🤝 친구 초대</button>
@@ -205,7 +268,7 @@
         </div>
       </div>
 
-      <div class="lobby-grid">
+      <div class="lobby-grid hidden" aria-hidden="true">
         <label class="lobby-field">
           <span class="field-label">대전 모드</span>
           <select id="modeSelect">
@@ -353,6 +416,13 @@
           ⚡ 에어 트리거 발동! (클릭 / SPACE)
         </button>
 
+        <!-- 2:2 팀전 탈락 팀원 유령 응원(Ghost Support) 바 -->
+        <div id="ghostSupportBar" class="ghost-support-bar hidden">
+          <span>👻 유령 응원 준비 완료!</span>
+          <button id="ghostWindShieldBtn" type="button" class="ghost-btn-pill">💨 바람 0 실드</button>
+          <button id="ghostSugarBoostBtn" type="button" class="ghost-btn-pill">🍬 슈가 파워 +15%</button>
+        </div>
+
         <!-- 내 턴 아닐 때 캐릭터 터치 시 돋보기 확대 & 볼꼬집기 교감 오버레이 -->
         <div id="petMagnifierOverlay" class="pet-magnifier-backdrop hidden" role="dialog" aria-label="캐릭터 돋보기 쓰담기">
           <div class="pet-magnifier-lens">
@@ -368,8 +438,13 @@
           <div class="modal-card">
             <p class="modal-kicker">MATCH RESULT</p>
             <h2 id="winnerHeadline" class="modal-title">승리!</h2>
-            <p class="modal-sub">상대 아래 빵을 깎아 떨어뜨리거나 간식 블록을 무너뜨려 보세요!</p>
-            <div class="modal-actions">
+            <p class="modal-sub">상대 아래 빵을 깎아 떨어뜨리거나 시럽 합동 콤보를 노려보세요!</p>
+            <p id="rewardAdToast" class="social-hint hidden" style="color:#FDE047; font-weight:700;"></p>
+            <div class="modal-actions" style="flex-wrap:wrap; gap:8px;">
+              <button id="doubleRewardAdBtn" type="button" class="secondary-btn" style="background:linear-gradient(135deg,#F59E0B,#EA580C); color:#FFF; border:none;">🎬 광고 보고 코인·학교점수 2배!</button>
+              <button id="rewindTurnAdBtn" type="button" class="secondary-btn hidden" style="background:linear-gradient(135deg,#0284C7,#2563EB); color:#FFF; border:none;">⏪ 광고 보고 1턴 되감기 (싱글 전용)</button>
+            </div>
+            <div class="modal-actions" style="margin-top:8px;">
               <button id="modalRestartBtn" type="button" class="primary-fire-btn">다시 하기</button>
               <button id="modalLobbyBtn" type="button" class="secondary-btn">로비로</button>
             </div>
@@ -429,18 +504,9 @@
             <div id="schoolAutocompleteList" class="school-autocomplete-list hidden"></div>
           </div>
         </label>
-        <div class="profile-field">
-          <span>학년 · 반 (숫자만 입력)</span>
-          <div class="grade-class-row">
-            <label class="num-unit-box">
-              <input id="profGradeNum" type="number" inputmode="numeric" min="1" max="6" required placeholder="3" />
-              <span>학년</span>
-            </label>
-            <label class="num-unit-box">
-              <input id="profClassNum" type="number" inputmode="numeric" min="1" max="30" required placeholder="2" />
-              <span>반</span>
-            </label>
-          </div>
+        <div class="profile-field hidden" aria-hidden="true">
+          <input id="profGradeNum" type="hidden" value="" />
+          <input id="profClassNum" type="hidden" value="" />
         </div>
         <div class="modal-actions">
           <button type="submit" class="primary-fire-btn">💾 등록 완료</button>
@@ -508,7 +574,73 @@
     </div>
   </div>
 
+  <!-- 6. 2:2 친구 듀오 4자리 코드 & 초대링크 모달 -->
+  <div id="duoPartyModal" class="modal-backdrop hidden" role="dialog" aria-label="2:2 친구 듀오">
+    <div class="modal-card">
+      <p class="modal-kicker">2:2 DUO BAKERY SIEGE</p>
+      <h2 class="modal-title">🤝 친구와 2:2 편먹기</h2>
+      <p class="modal-sub">4자리 방 코드 또는 초대 링크로 친구와 블루팀에 나란히 서세요!</p>
+      <div class="party-code-bar" style="margin:8px 0;">
+        <div class="party-code-meta">
+          <span class="party-code-label">우리 팀 4자리 방 코드</span>
+          <strong id="duoCodeDisplay" class="party-code-value">4821</strong>
+        </div>
+        <button id="duoCopyLinkBtn" type="button" class="party-copy-btn">🔗 초대링크 복사</button>
+      </div>
+      <p id="duoCopyToast" class="social-hint hidden" style="color:#4ADE80;"></p>
+      <div class="duo-slots-preview">
+        <div class="duo-slot-pill blue">🔵 블루 1: 나 (호스트)</div>
+        <div id="duoAllySlotName" class="duo-slot-pill blue">🔵 블루 2: 친구 대기 중</div>
+      </div>
+      <div class="social-row" style="margin:8px 0;">
+        <input id="duoJoinInput" type="text" class="social-input" maxlength="4" placeholder="친구 방 코드 4자리 입력 (선택)" />
+      </div>
+      <div class="modal-actions">
+        <button id="duoStartBattleBtn" type="button" class="primary-fire-btn">🚀 2:2 듀오 즉시 출격!</button>
+        <button id="duoCloseBtn" type="button" class="secondary-btn">닫기</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 7. 전국 학교 대항전 TOP 100 모달 (COPPA 안전: 학교 소속만, 학년/반 미수집) -->
+  <div id="schoolTopModal" class="modal-backdrop hidden" role="dialog" aria-label="전국 학교 대항전">
+    <div class="modal-card">
+      <p class="modal-kicker">NATIONAL SCHOOL TOP 100 · COPPA SAFE</p>
+      <h2 class="modal-title">🏫 전국 학교 대항전</h2>
+      <p class="modal-sub">소속 학교만 등록해 우리 학교를 TOP 100 1등으로 올려보세요! (학년·반 미수집)</p>
+      <div class="social-row" style="margin:8px 0;">
+        <input id="schoolMyAffiliationInput" type="text" class="social-input" maxlength="24" placeholder="내 학교명 (예: 서울하늘초등학교)" />
+        <button id="schoolSaveAffiliationBtn" type="button" class="social-mini-btn">저장</button>
+      </div>
+      <div id="schoolTopList" class="school-top-list"></div>
+      <div class="modal-actions" style="margin-top:10px;">
+        <button id="schoolStartBattleBtn" type="button" class="primary-fire-btn">⚔️ 학교 대표 출격!</button>
+        <button id="schoolCloseBtn" type="button" class="secondary-btn">닫기</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 8. Non-P2W 코스메틱 상점 & 1일 3회 황금 오븐 무료 뽑기 모달 -->
+  <div id="shopModal" class="modal-backdrop hidden" role="dialog" aria-label="코스메틱 상점">
+    <div class="modal-card shop-modal-card">
+      <p class="modal-kicker">100% NON-P2W COSMETIC BOUTIQUE</p>
+      <h2 class="modal-title">🛍️ 볼탱이 코스메틱 상점</h2>
+      <p id="shopCoinText" class="modal-sub" style="color:#FDE047; font-weight:700;">보유 코인: 🪙 500</p>
+      <button id="goldenOvenGachaBtn" type="button" class="golden-oven-btn">🎰 황금 오븐 무료 뽑기 (오늘 3/3회 남음)</button>
+      <p id="goldenOvenStatus" class="social-hint" style="min-height:18px; color:#A7F3D0;"></p>
+      <div class="shop-tabs">
+        <button type="button" class="shop-tab-btn active" data-shop-tab="hats">👒 모자/코스튬</button>
+        <button type="button" class="shop-tab-btn" data-shop-tab="trails">🍯 시럽 궤적</button>
+        <button type="button" class="shop-tab-btn" data-shop-tab="bungee">💥 번지 이펙트</button>
+      </div>
+      <div id="shopItemsGrid" class="shop-items-grid"></div>
+      <div class="modal-actions" style="margin-top:10px;">
+        <button id="shopCloseBtn" type="button" class="secondary-btn">닫기</button>
+      </div>
+    </div>
+  </div>
+
   <script src="./vendor/matter.min.js"></script>
-  <script type="module" src="./src/main.js?v=51"></script>
+  <script type="module" src="./src/main.js?v=52"></script>
 </body>
 </html>

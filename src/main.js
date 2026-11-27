@@ -1,7 +1,9 @@
 // 말랑포포: 폭신폭신 공성전 — 메인 엔트리 및 입력·UI 바인딩
 import { CHARACTERS, CHARACTER_LIST, SHELLS, SKILL_MODES, WORLD } from './config.js?v=27';
-import { GameRenderer, drawSpiritAvatar, drawPetMagnifierFrame } from './renderer.js?v=41';
-import { GameEngine } from './gameEngine.js?v=45';
+import { drawSpiritAvatar, drawPetMagnifierFrame } from './renderer.js?v=41';
+import { GameRenderer3D } from './renderer3d.js?v=3';
+import { GameEngine } from './gameEngine.js?v=47';
+import { initBakeryCommercialUi } from './bakeryUi.js?v=1';
 import {
   loadUserProfile,
   saveUserProfile,
@@ -20,7 +22,7 @@ import {
 import { OnlineBattleClient } from './onlineAdapter.js';
 
 const canvas = document.getElementById('gameCanvas');
-const renderer = new GameRenderer(canvas);
+const renderer = new GameRenderer3D(canvas);
 
 // DOM 요소 참조
 const ui = {
@@ -621,7 +623,13 @@ canvas.addEventListener('pointerdown', (e) => {
   }
 
   const isMyTurn = engine.phase === 'AIM' && engine.activeActor?.controller === 'human';
-  if (!isMyTurn) return;
+  if (!isMyTurn) {
+    // 2:2 팀전에서 내 턴이 아닐 때 캔버스 클릭 시 "여기 쏴! 🎯" 전술 핑 표시
+    if (engine.gameMode === '2v2_team' && engine.phase === 'AIM') {
+      engine.addTacticalPing(pt.x, pt.y, '여기 쏴! 🎯');
+    }
+    return;
+  }
 
   try {
     canvas.setPointerCapture(e.pointerId);
@@ -1995,8 +2003,11 @@ async function refreshLanOpenRooms() {
     // ignore transient poll error
   }
 }
-refreshLanOpenRooms();
-setInterval(refreshLanOpenRooms, 2200);
+const STATIC_HOST = /github\.io$|^(127\.0\.0\.1|localhost)$/.test(window.location.hostname);
+if (!STATIC_HOST) {
+  refreshLanOpenRooms();
+  setInterval(refreshLanOpenRooms, 2200);
+}
 
 let currentLbScope = 'all';
 for (const btn of ui.lbScopeBtns || []) {
@@ -2128,8 +2139,10 @@ async function refreshLeaderboard(force = false) {
     // ignore transient error
   }
 }
-refreshLeaderboard(true);
-setInterval(() => refreshLeaderboard(false), 5000);
+if (!STATIC_HOST) {
+  refreshLeaderboard(true);
+  setInterval(() => refreshLeaderboard(false), 5000);
+}
 
 // 새로고침 후 진행 중인 온라인 대전 세션이 있으면 자동 재접속
 (async () => {
@@ -2292,6 +2305,15 @@ for (const tab of ui.genderTabs) {
 
 renderLobbyCharGrid();
 updateSelectedCharBanner(CHARACTERS[ui.charSelect.value]);
+
+// Phase 2/3 상용 UI 초기화 (4대 소셜 원클릭 로그인 · 3카드 다이어트 로비 · 2:2 듀오 · 학교 TOP 100 · Non-P2W 코스메틱 상점)
+initBakeryCommercialUi({
+  engine,
+  ui,
+  launchMatchSpec,
+  saveUserProfile,
+  loadUserProfile,
+});
 
 // 초기 매치 구동 (백그라운드 초기화 후 로비 대기)
 restartWithCurrentOptions();

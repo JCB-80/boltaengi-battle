@@ -66,15 +66,18 @@ export class GameEngine {
     };
     this.turnNumber = 1;
     this.phase = 'AIM'; // 'AIM' | 'FLIGHT' | 'SETTLE' | 'GAME_OVER'
-    this.turnTimerFrames = 20 * 60;
-    this.turnTimeLeft = 20;
+    this.turnTimerFrames = 18 * 60;
+    this.turnTimeLeft = 18;
     this.activeActor = null;
     this.winnerText = '';
 
     this.settleCounter = 0;
     this.settleElapsed = 0;
     this.hitstopFrames = 0;
+    this.airSlowFrames = 0;
     this.frameCount = 0;
+    this.syrupZones = [];       // 2v2 Butter-Syrup wet zones -> 1.6x crater combo!
+    this.tacticalPings = [];    // 2v2 "여기 쏴! 🎯" pings
 
     // 계급(레벨) & 외형 꾸미기 (성능 차이 0% — 순수 명예/코스메틱)
     this.playerXp = Number(localStorage.getItem('puffpuff_xp') || '0');
@@ -405,9 +408,16 @@ export class GameEngine {
     this.activeActor.fuel = this.activeActor.powerUpTurns > 0 ? 150 : this.activeActor.maxFuel;
     this.activeActor.useUltimate = false;
     this.phase = 'AIM';
-    this.turnTimerFrames = 20 * 60;
-    this.turnTimeLeft = 20;
+    this.turnTimerFrames = 18 * 60;
+    this.turnTimeLeft = 18;
     this.dragState.active = false;
+
+    // 3분 경기 중 후반(서든데스 / 9턴 이상) 돌입 시 BGM 템포업 & 더블 데미지 연출
+    const suddenDeath = this.turnNumber >= 9;
+    this.audio.setSuddenDeath?.(suddenDeath);
+    if (this.turnNumber === 9) {
+      this.spawnFloatingText(WORLD.WIDTH * 0.5, 145, '🔥 서든데스! 템포 UP & 화력 강화!', '#FDE047', 23);
+    }
 
     this.spawnFloatingText(
       this.activeActor.x,
@@ -628,9 +638,12 @@ export class GameEngine {
         const children = proj.triggerAirSkill();
         newlySpawned.push(...children);
         triggeredAny = true;
-        this.renderer.addShake(4.5);
-        this.spawnBurst(proj.x, proj.y, '#38BDF8', 16, 4.5);
-        this.spawnFloatingText(proj.x, proj.y - 24, proj.spec.triggerLabel, '#38BDF8', 18);
+        this.renderer.addShake(6.5);
+        this.airSlowFrames = 9; // 150ms Air-Trigger Slow-Mo!
+        this.shockwaves.push({ x: proj.x, y: proj.y, radius: 14, maxRadius: 115, alpha: 0.92, color: '#38BDF8' });
+        this.spawnBurst(proj.x, proj.y, '#38BDF8', 22, 5.2);
+        this.spawnFloatingText(proj.x, proj.y - 24, `⚡ ${proj.spec.triggerLabel}`, '#38BDF8', 20);
+        try { navigator.vibrate?.(18); } catch {}
       }
     }
 
@@ -655,17 +668,32 @@ export class GameEngine {
     customLabel = null,
     { isHeavySkill = false, isUltimate = false, ultCharId = null, skillEffect = 'NORMAL' } = {}
   ) {
+    // 2v2 Butter-Syrup 1.6x Terrain Destruction Combo!
+    const syrupHit = this.syrupZones.find((z) => Math.hypot(z.x - cx, z.y - cy) < z.r + radius);
+    if (syrupHit) {
+      radius = Math.round(radius * 1.6);
+      this.syrupZones = this.syrupZones.filter((z) => z !== syrupHit);
+      this.spawnFloatingText(cx, cy - 52, '🍯 시럽 합동 콤보 1.6x!!', '#FDE047', 24);
+    } else if (this.gameMode === '2v2_team' && Math.random() < 0.65) {
+      this.syrupZones.push({ x: cx, y: cy, r: radius * 0.95, ttl: 2 });
+    }
+
     if (isUltimate || isHeavySkill) {
       this.audio.playHeavyImpact();
-      this.renderer.addShake(isUltimate ? 28 : 19);
-      this.renderer.addFlash(isUltimate ? '#FDBA74' : '#FEF08A', isUltimate ? 0.44 : 0.25);
-      this.hitstopFrames = isUltimate ? 6 : 3;
+      this.renderer.addShake(isUltimate ? 28 : 20);
+      this.renderer.addFlash(isUltimate ? '#FDBA74' : '#FEF08A', isUltimate ? 0.44 : 0.28);
+      this.hitstopFrames = isUltimate ? 7 : 5; // 80ms+ Hit-Stop
     } else {
       this.audio.playExplosion(radius);
-      this.renderer.addShake(Math.min(20, Math.max(10, radius * 0.4)));
-      this.renderer.addFlash('#FEF3C7', customLabel ? 0.22 : 0.13);
-      this.hitstopFrames = customLabel ? 3 : 2;
+      this.renderer.addShake(Math.min(22, Math.max(11, radius * 0.44)));
+      this.renderer.addFlash('#FEF3C7', customLabel ? 0.24 : 0.16);
+      this.hitstopFrames = 5; // Crisp 80ms Hit-Stop (5 frames @ 60fps)
     }
+
+    // 40+ Bakery Crumble, Cream & Jam Particles on impact!
+    this.spawnBurst(cx, cy, '#FDE68A', 22, 6.2);
+    this.spawnBurst(cx, cy, '#FFF1F2', 14, 5.4);
+    this.spawnBurst(cx, cy, color || '#FB7185', 12, 6.8);
 
     // 1) 지형 실시간 원형 굴착 + 물리 지반 진동 & 분출 효과
     const carvedCells = this.terrain.carveCrater(cx, cy, radius);
@@ -958,13 +986,50 @@ export class GameEngine {
         particles: this.particles,
         shockwaves: this.shockwaves,
         floatingTexts: this.floatingTexts,
+        tacticalPings: this.tacticalPings,
+        syrupZones: this.syrupZones,
         wind: this.wind,
+        weather: this.weather,
+        tornado: this.tornado,
+        skyBox: this.skyBox,
+        fixedBoxes: this.fixedBoxes,
+        pityCutin: this.pityCutin,
         phase: this.phase,
         activeActor: this.activeActor,
         dragState: this.dragState,
         frameCount: this.frameCount,
       });
       return;
+    }
+
+    // 에어 트리거 발동 시 150ms 슬로우모션 (3프레임 중 1프레임만 물리 진행)
+    if (this.airSlowFrames > 0) {
+      this.airSlowFrames--;
+      if (this.airSlowFrames % 3 !== 0) {
+        this.updateVisualEffects();
+        this.renderer.render({
+          terrain: this.terrain,
+          structures: this.structures,
+          carts: this.carts,
+          projectiles: this.projectiles,
+          particles: this.particles,
+          shockwaves: this.shockwaves,
+          floatingTexts: this.floatingTexts,
+          tacticalPings: this.tacticalPings,
+          syrupZones: this.syrupZones,
+          wind: this.wind,
+          weather: this.weather,
+          tornado: this.tornado,
+          skyBox: this.skyBox,
+          fixedBoxes: this.fixedBoxes,
+          pityCutin: this.pityCutin,
+          phase: this.phase,
+          activeActor: this.activeActor,
+          dragState: this.dragState,
+          frameCount: this.frameCount,
+        });
+        return;
+      }
     }
 
     // 1) Matter.js 강체 물리 스텝 + 넘어지는 건물 바람 외력 적용
@@ -1042,14 +1107,19 @@ export class GameEngine {
     for (const cart of this.carts) {
       cart.update(this.terrain, (fallenCart) => {
         this.audio.playDropOut();
-        this.renderer.addShake(15);
-        this.spawnBurst(fallenCart.x, WORLD.SEA_LEVEL - 6, '#FFFFFF', 28, 6.4);
+        this.renderer.addShake(18);
+        this.renderer.triggerBungeeZoom?.(fallenCart.x, WORLD.SEA_LEVEL - 40);
+        if (this.gameMode === '2v2_team') {
+          fallenCart.ghostSupportReady = true;
+        }
+        this.spawnBurst(fallenCart.x, WORLD.SEA_LEVEL - 6, '#FFFFFF', 36, 7.2);
+        this.spawnBurst(fallenCart.x, WORLD.SEA_LEVEL - 14, '#FDE047', 18, 6.4);
         this.spawnFloatingText(
-          Math.min(WORLD.WIDTH - 120, Math.max(120, fallenCart.x)),
-          WORLD.SEA_LEVEL - 42,
-          `${fallenCart.displayName} 구름 아래로 추락!!`,
-          '#38BDF8',
-          23
+          Math.min(WORLD.WIDTH - 140, Math.max(140, fallenCart.x)),
+          WORLD.SEA_LEVEL - 52,
+          `🌊 BUNGEE OUT!! ${fallenCart.displayName} +100🪙`,
+          '#FDE047',
+          26
         );
         this.notifyHud();
       });
@@ -1077,12 +1147,27 @@ export class GameEngine {
             this.spawnFloatingText(
               this.activeActor.x,
               this.activeActor.y - 78,
-              '⏱ 시간 초과! 턴 넘김!',
+              '⏱ 18초 초과! 스마트 AI 자동 발사!',
               '#FB7185',
               19
             );
-            this.activeActor.timelineTick += 100;
-            this.enterSettlePhase();
+            const autoPlan = computeAIShot({
+              actor: this.activeActor,
+              carts: this.carts,
+              wind: this.wind,
+              weather: this.weather,
+              terrain: this.terrain,
+              presetKey: 'lv3',
+            });
+            if (autoPlan && !autoPlan.skipTurn) {
+              this.activeActor.facing = autoPlan.facing;
+              this.activeActor.aimElevation = autoPlan.elevation;
+              this.activeActor.aimPower = autoPlan.power;
+              this.fireActiveActor();
+            } else {
+              this.activeActor.timelineTick += 100;
+              this.enterSettlePhase();
+            }
           }
         }
       } else {
@@ -1125,6 +1210,8 @@ export class GameEngine {
       particles: this.particles,
       shockwaves: this.shockwaves,
       floatingTexts: this.floatingTexts,
+      tacticalPings: this.tacticalPings,
+      syrupZones: this.syrupZones,
       wind: this.wind,
       weather: this.weather,
       tornado: this.tornado,
@@ -1136,6 +1223,28 @@ export class GameEngine {
       dragState: this.dragState,
       frameCount: this.frameCount,
     });
+  }
+
+  addTacticalPing(x, y, label = '여기 쏴! 🎯') {
+    this.tacticalPings.push({ x, y, label, life: 120, maxLife: 120 });
+    this.audio.playSkillCharge();
+  }
+
+  useGhostSupport(kind) {
+    const myDead = this.carts.find((c) => c.teamId === 1 && !c.alive && c.ghostSupportReady);
+    const ally = this.carts.find((c) => c.teamId === 1 && c.alive);
+    if (!myDead || !ally) return false;
+    myDead.ghostSupportReady = false;
+    if (kind === 'wind_shield') {
+      this.wind = 0;
+      this.spawnFloatingText(ally.x, ally.y - 86, '👻 유령 응원: 바람 0 실드 발동!', '#38BDF8', 22);
+    } else {
+      ally.powerUpTurns = 1;
+      this.spawnFloatingText(ally.x, ally.y - 86, '👻 유령 응원: 슈가 파워 +15%!', '#F472B6', 22);
+    }
+    this.audio.playSkillCharge();
+    this.notifyHud();
+    return true;
   }
 
   stepTornado() {
@@ -1456,6 +1565,11 @@ export class GameEngine {
       ft.y -= 0.75;
       ft.life--;
       if (ft.life <= 0) this.floatingTexts.splice(i, 1);
+    }
+
+    for (let i = this.tacticalPings.length - 1; i >= 0; i--) {
+      this.tacticalPings[i].life--;
+      if (this.tacticalPings[i].life <= 0) this.tacticalPings.splice(i, 1);
     }
 
     if (this.pityCutin.active) {
