@@ -168,6 +168,13 @@ export function initBakeryCommercialUi({ engine, ui, launchMatchSpec, saveUserPr
   }
 
   // 1) 4-Social One-Click Login Flow (Google / Apple / Kakao / Naver)
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get('logout') === '1') {
+    try { localStorage.removeItem(SOCIAL_SESSION_KEY); } catch {}
+    urlParams.delete('logout');
+    const cleanUrl = `${window.location.pathname}${urlParams.toString() ? '?' + urlParams.toString() : ''}`;
+    try { window.history.replaceState({}, '', cleanUrl); } catch {}
+  }
   const existingSession = loadSocialSession();
   if (existingSession) {
     el.loginOverlay?.classList.add('hidden');
@@ -175,6 +182,12 @@ export function initBakeryCommercialUi({ engine, ui, launchMatchSpec, saveUserPr
   } else {
     el.loginOverlay?.classList.remove('hidden');
   }
+
+  document.getElementById('socialLogoutBtn')?.addEventListener('click', () => {
+    try { localStorage.removeItem(SOCIAL_SESSION_KEY); } catch {}
+    engine.audio.stopBgm();
+    el.loginOverlay?.classList.remove('hidden');
+  });
 
   el.loginBtns.forEach((btn) => {
     btn.addEventListener('click', () => {
