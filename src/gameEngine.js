@@ -168,6 +168,8 @@ export class GameEngine {
     this.winnerText = '';
     this.turnNumber = 1;
     this.hitstopFrames = 0;
+    this.matchStartTime = performance.now();
+    this.lastMatchScoreInfo = null;
 
     const terraces = this.terrain.generate(this.mapPreset);
     const roster = Array.isArray(customRoster) && customRoster.length >= 2
@@ -905,9 +907,35 @@ export class GameEngine {
           ? `${winCart.displayName} 추락 완승!`
           : `${winCart.displayName} 승리!`;
       }
-      if (this.carts[0]?.alive) {
+      const elapsedSec = Math.max(1, Math.round((performance.now() - (this.matchStartTime || performance.now())) / 1000));
+      const playerWon = Boolean(this.carts[0]?.alive);
+      const dropWin = playerWon && this.carts.some((c) => !c.alive && c.droppedOut && c.teamId !== this.carts[0].teamId);
+      if (playerWon) {
+        const baseScore = 1000;
+        const speedSecBonus = Math.max(0, Math.round((180 - elapsedSec) * 15));
+        const speedTurnBonus = Math.max(0, (10 - this.turnNumber) * 250);
+        const bungeeBonus = dropWin ? 500 : 0;
+        const totalScore = baseScore + speedSecBonus + speedTurnBonus + bungeeBonus;
+        this.lastMatchScoreInfo = {
+          won: true,
+          elapsedSec,
+          turns: this.turnNumber,
+          baseScore,
+          speedBonus: speedSecBonus + speedTurnBonus,
+          bungeeBonus,
+          totalScore,
+        };
         this.grantXp(50, '승리');
       } else {
+        this.lastMatchScoreInfo = {
+          won: false,
+          elapsedSec,
+          turns: this.turnNumber,
+          baseScore: 100,
+          speedBonus: 0,
+          bungeeBonus: 0,
+          totalScore: 100,
+        };
         this.grantXp(15, '참여');
       }
       this.notifyHud();
@@ -1600,6 +1628,7 @@ export class GameEngine {
       rankInfo: this.getRankInfo(),
       cosmeticEnabled: this.cosmeticEnabled,
       matchLabel: this.matchLabel || '',
+      lastMatchScoreInfo: this.lastMatchScoreInfo || null,
     });
   }
 }

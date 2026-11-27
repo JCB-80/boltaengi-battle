@@ -7,17 +7,17 @@
 const SOCIAL_SESSION_KEY = 'boltaengi_social_session_v2';
 const ECONOMY_KEY = 'boltaengi_economy_v2';
 
-const DEFAULT_SCHOOLS_TOP = [
-  { rank: 1, name: '서울하늘초등학교', score: 148200, wins: 1240, region: '서울' },
-  { rank: 2, name: '부산마린중학교', score: 139650, wins: 1185, region: '부산' },
-  { rank: 3, name: '경기판교초등학교', score: 131400, wins: 1092, region: '경기' },
-  { rank: 4, name: '인천송도중학교', score: 124900, wins: 1014, region: '인천' },
-  { rank: 5, name: '대전둔산고등학교', score: 119300, wins: 968, region: '대전' },
-  { rank: 6, name: '대구수성초등학교', score: 112800, wins: 905, region: '대구' },
-  { rank: 7, name: '광주첨단중학교', score: 108450, wins: 874, region: '광주' },
-  { rank: 8, name: '제주한라초등학교', score: 103100, wins: 822, region: '제주' },
-  { rank: 9, name: '울산삼산고등학교', score: 98750, wins: 780, region: '울산' },
-  { rank: 10, name: '세종아름초등학교', score: 94200, wins: 745, region: '세종' },
+const DEFAULT_TOP_RANKERS = [
+  { name: '번지마스터_K', score: 42800, bestSec: 16, wins: 14 },
+  { name: '크루아상원샷', score: 36450, bestSec: 19, wins: 12 },
+  { name: '딸기잼스나이퍼', score: 31200, bestSec: 21, wins: 10 },
+  { name: '모찌펀치99', score: 26850, bestSec: 23, wins: 9 },
+  { name: '버터식빵킬러', score: 22400, bestSec: 25, wins: 8 },
+  { name: '시럽폭격기', score: 18900, bestSec: 27, wins: 7 },
+  { name: '마카롱에이스', score: 14550, bestSec: 30, wins: 5 },
+  { name: '푸딩트릭샷', score: 10200, bestSec: 34, wins: 4 },
+  { name: '와플저격수', score: 6400, bestSec: 39, wins: 2 },
+  { name: '초코도넛루키', score: 3100, bestSec: 45, wins: 1 },
 ];
 
 const COSMETIC_ITEMS = {
@@ -52,7 +52,9 @@ function loadEconomy() {
       gachaDate,
       gachaUsed,
       seasonPassLevel: Number(raw.seasonPassLevel || 1),
-      schoolPoints: Number(raw.schoolPoints || 120),
+      cumulativeScore: Number(raw.cumulativeScore || 0),
+      bestClearSec: Number(raw.bestClearSec || 0),
+      totalWins: Number(raw.totalWins || 0),
     };
   } catch {
     return {
@@ -62,7 +64,9 @@ function loadEconomy() {
       gachaDate: today,
       gachaUsed: 0,
       seasonPassLevel: 1,
-      schoolPoints: 120,
+      cumulativeScore: 0,
+      bestClearSec: 0,
+      totalWins: 0,
     };
   }
 }
@@ -112,10 +116,12 @@ export function initBakeryCommercialUi({ engine, ui, launchMatchSpec, saveUserPr
     duoAllySlotName: document.getElementById('duoAllySlotName'),
     schoolTopModal: document.getElementById('schoolTopModal'),
     schoolTopList: document.getElementById('schoolTopList'),
+    myRankerSummaryBox: document.getElementById('myRankerSummaryBox'),
     schoolMyInput: document.getElementById('schoolMyAffiliationInput'),
     schoolSaveBtn: document.getElementById('schoolSaveAffiliationBtn'),
     schoolStartBtn: document.getElementById('schoolStartBattleBtn'),
     schoolCloseBtn: document.getElementById('schoolCloseBtn'),
+    scoreBreakdownText: document.getElementById('scoreBreakdownText'),
     shopModal: document.getElementById('shopModal'),
     shopCloseBtn: document.getElementById('shopCloseBtn'),
     shopTabs: Array.from(document.querySelectorAll('.shop-tab-btn')),
@@ -149,15 +155,14 @@ export function initBakeryCommercialUi({ engine, ui, launchMatchSpec, saveUserPr
     const providerLabels = { google: 'Google', apple: 'Apple', kakao: 'Kakao', naver: 'Naver' };
     const badge = providerLabels[session.provider] || 'Social';
     if (ui.profileSummaryText) {
-      const sch = session.schoolName ? `🏫 ${session.schoolName}` : '🏫 학교 미설정';
-      ui.profileSummaryText.textContent = `[${badge}] ${session.nickname} · ${sch}`;
+      ui.profileSummaryText.textContent = `[${badge}] ${session.nickname} · 🏆 ${econ.cumulativeScore.toLocaleString()}점`;
     }
     try {
       saveUserProfile?.({
         userId: session.userId,
         nickname: session.nickname,
-        schoolName: session.schoolName || '베이커리 아카데미',
-        className: '', // COPPA 안전: 학년·반 절대 미수집!
+        schoolName: '',
+        className: '',
       });
     } catch {}
   }
@@ -174,14 +179,13 @@ export function initBakeryCommercialUi({ engine, ui, launchMatchSpec, saveUserPr
   el.loginBtns.forEach((btn) => {
     btn.addEventListener('click', () => {
       const provider = btn.dataset.provider || 'google';
-      const schoolInput = (el.loginSchoolInput?.value || '').trim().slice(0, 24);
+      const customNick = (el.loginSchoolInput?.value || '').trim().slice(0, 16);
       const randNum = Math.floor(1000 + Math.random() * 9000);
       const nickPrefixes = { google: '구글모찌', apple: '애플슈가', kakao: '카카오볼탱', naver: '네이버크림' };
       const session = {
         provider,
         userId: `${provider}_${randNum}`,
-        nickname: `${nickPrefixes[provider] || '말랑볼탱'}${randNum}`,
-        schoolName: schoolInput || '서울하늘초등학교',
+        nickname: customNick || `${nickPrefixes[provider] || '말랑볼탱'}${randNum}`,
         loggedInAt: Date.now(),
       };
       saveSocialSession(session);
@@ -278,64 +282,74 @@ export function initBakeryCommercialUi({ engine, ui, launchMatchSpec, saveUserPr
     openDuoPartyModal(urlParty);
   }
 
-  // Card 3: National School TOP 100 (COPPA-safe: School Affiliation ONLY, zero grade/class!)
-  function renderSchoolTop100() {
+  // Card 3: Speed-Kill Cumulative Score Ranker Leaderboard
+  function renderScoreRankers() {
     if (!el.schoolTopList) return;
     const sess = loadSocialSession();
-    const mySchool = sess?.schoolName || '서울하늘초등학교';
-    if (el.schoolMyInput && !el.schoolMyInput.value) el.schoolMyInput.value = mySchool;
+    const myNick = sess?.nickname || '말랑랭커';
+    if (el.schoolMyInput && !el.schoolMyInput.value) el.schoolMyInput.value = myNick;
 
-    const list = DEFAULT_SCHOOLS_TOP.map((s) => ({ ...s }));
-    const existing = list.find((s) => s.name === mySchool);
-    if (existing) {
-      existing.score += econ.schoolPoints;
-    } else if (mySchool) {
-      list.push({ rank: 11, name: mySchool, score: 88400 + econ.schoolPoints, wins: 690, region: '내 학교' });
-    }
+    const list = DEFAULT_TOP_RANKERS.map((r) => ({ ...r, isMine: false }));
+    list.push({
+      name: myNick,
+      score: econ.cumulativeScore,
+      bestSec: econ.bestClearSec || 0,
+      wins: econ.totalWins || 0,
+      isMine: true,
+    });
     list.sort((a, b) => b.score - a.score);
 
-    el.schoolTopList.innerHTML = list.map((s, idx) => {
+    const myRankIdx = list.findIndex((r) => r.isMine);
+    const myRankNum = myRankIdx >= 0 ? myRankIdx + 1 : list.length;
+    if (el.myRankerSummaryBox) {
+      const bestTxt = econ.bestClearSec > 0 ? `⚡ 최단 ${econ.bestClearSec}초 컷` : '첫 빠른 처치 도전!';
+      el.myRankerSummaryBox.innerHTML = `
+        <span class="sr-rank">${myRankNum}위</span>
+        <span class="sr-name"><b>${myNick}</b> · ${bestTxt} (${econ.totalWins}승)</span>
+        <span class="sr-score">${econ.cumulativeScore.toLocaleString()}점</span>
+      `;
+    }
+
+    el.schoolTopList.innerHTML = list.map((r, idx) => {
       const rank = idx + 1;
       const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `${rank}위`;
-      const isMine = s.name === mySchool;
-      return `<div class="school-rank-row${isMine ? ' mine' : ''}">
+      const secTag = r.bestSec > 0 ? `<small style="opacity:0.75;margin-left:4px;">⚡${r.bestSec}초</small>` : '';
+      return `<div class="school-rank-row${r.isMine ? ' mine' : ''}">
         <span class="sr-rank">${medal}</span>
-        <span class="sr-name">${s.name} ${isMine ? '<em class="sr-me-tag">내 학교</em>' : ''}</span>
-        <span class="sr-score">${s.score.toLocaleString()}점</span>
+        <span class="sr-name">${r.name} ${r.isMine ? '<em class="sr-me-tag">나</em>' : ''}${secTag}</span>
+        <span class="sr-score">${r.score.toLocaleString()}점</span>
       </div>`;
     }).join('');
   }
 
   el.schoolWarCard?.addEventListener('click', () => {
     engine.audio.ensureContext();
-    renderSchoolTop100();
+    renderScoreRankers();
     el.schoolTopModal?.classList.remove('hidden');
   });
 
   el.schoolSaveBtn?.addEventListener('click', () => {
-    const newSchool = (el.schoolMyInput?.value || '').trim().slice(0, 24);
-    if (!newSchool) return;
-    const sess = loadSocialSession() || { provider: 'google', userId: 'player', nickname: '볼탱이' };
-    sess.schoolName = newSchool;
+    const newNick = (el.schoolMyInput?.value || '').trim().slice(0, 16);
+    if (!newNick) return;
+    const sess = loadSocialSession() || { provider: 'google', userId: 'player', nickname: newNick };
+    sess.nickname = newNick;
     saveSocialSession(sess);
     applySessionToProfile(sess);
-    renderSchoolTop100();
+    renderScoreRankers();
   });
 
   el.schoolStartBtn?.addEventListener('click', () => {
     el.schoolTopModal?.classList.add('hidden');
     const sess = loadSocialSession();
-    const mySchool = sess?.schoolName || '서울하늘초등학교';
-    const rival = DEFAULT_SCHOOLS_TOP.find((s) => s.name !== mySchool)?.name || '부산마린중학교';
+    const myNick = sess?.nickname || '랭커도전자';
+    const topRival = DEFAULT_TOP_RANKERS[Math.floor(Math.random() * 5)];
     const playerChar = ui.charSelect?.value || 'M01_MOCHI';
     launchMatchSpec({
-      gameMode: '2v2_team',
-      matchLabel: `🏫 ${mySchool} vs ${rival}`,
+      gameMode: '1v1_ai',
+      matchLabel: `🏆 랭커전 (${myNick} vs ${topRival.name})`,
       customRoster: [
-        { teamId: 1, charKey: playerChar, x: 225, facing: 1, controller: 'human', name: `[${mySchool}] ${sess?.nickname || '대표'}` },
-        { teamId: 2, charKey: 'F12_PUDDING', x: 1185, facing: -1, controller: 'ai', name: `[${rival}] 대표1` },
-        { teamId: 1, charKey: 'M05_WAFFLE', x: 405, facing: 1, controller: 'ai', name: `[${mySchool}] 파트너` },
-        { teamId: 2, charKey: 'M08_CINNA', x: 1375, facing: -1, controller: 'ai', name: `[${rival}] 대표2` },
+        { teamId: 1, charKey: playerChar, x: 275, facing: 1, controller: 'human', name: myNick },
+        { teamId: 2, charKey: 'F11_BERRY', x: 1325, facing: -1, controller: 'ai', name: `👑 ${topRival.name}` },
       ],
     });
   });
@@ -425,16 +439,21 @@ export function initBakeryCommercialUi({ engine, ui, launchMatchSpec, saveUserPr
   el.ghostSugarBtn?.addEventListener('click', () => engine.useGhostSupport('sugar_boost'));
 
   let doubledThisMatch = false;
+  let scoreRecordedThisMatch = false;
+  let lastEarnedScore = 0;
+
   el.doubleRewardAdBtn?.addEventListener('click', () => {
     if (doubledThisMatch) return;
     doubledThisMatch = true;
+    const bonusScore = Math.max(200, lastEarnedScore);
     econ.coins += 200;
-    econ.schoolPoints += 120;
+    econ.cumulativeScore += bonusScore;
     saveEconomy(econ);
     updateEconomyHud();
+    applySessionToProfile(loadSocialSession());
     engine.audio.playApplause();
     if (el.rewardAdToast) {
-      el.rewardAdToast.textContent = '🎬 보상형 광고 완료! 코인 +200🪙 & 학교 점수 +120점 (2배 적립)!';
+      el.rewardAdToast.textContent = `🎬 2배 보상 완료! 코인 +200🪙 & 스코어 +${bonusScore.toLocaleString()}점 추가 누적 (총 ${econ.cumulativeScore.toLocaleString()}점)!`;
       el.rewardAdToast.classList.remove('hidden');
     }
     el.doubleRewardAdBtn.disabled = true;
@@ -460,11 +479,10 @@ export function initBakeryCommercialUi({ engine, ui, launchMatchSpec, saveUserPr
     }
   });
 
-  // Sync Ghost Support Bar & Rewarded Ad buttons whenever HUD updates
+  // Sync Ghost Support Bar, Speed-Kill Cumulative Score & Rewarded Ad buttons
   const origOnHudUpdate = engine.onHudUpdate;
   engine.onHudUpdate = (state) => {
     origOnHudUpdate?.(state);
-    // Ghost Support Bar visibility (2v2 eliminated ally with ready support)
     if (el.ghostSupportBar) {
       const hasGhost = state.gameMode === '2v2_team' &&
         state.phase !== 'GAME_OVER' &&
@@ -473,9 +491,33 @@ export function initBakeryCommercialUi({ engine, ui, launchMatchSpec, saveUserPr
       el.ghostSupportBar.classList.toggle('hidden', !hasGhost);
     }
     if (state.phase === 'GAME_OVER') {
+      if (!scoreRecordedThisMatch && state.lastMatchScoreInfo) {
+        scoreRecordedThisMatch = true;
+        const info = state.lastMatchScoreInfo;
+        lastEarnedScore = info.totalScore;
+        econ.cumulativeScore += info.totalScore;
+        econ.coins += info.won ? 150 : 40;
+        if (info.won) {
+          econ.totalWins = (econ.totalWins || 0) + 1;
+          if (!econ.bestClearSec || info.elapsedSec < econ.bestClearSec) {
+            econ.bestClearSec = info.elapsedSec;
+          }
+        }
+        saveEconomy(econ);
+        updateEconomyHud();
+        applySessionToProfile(loadSocialSession());
+        if (el.scoreBreakdownText) {
+          if (info.won) {
+            const bungeeTxt = info.bungeeBonus > 0 ? ` + 번지 +${info.bungeeBonus}` : '';
+            el.scoreBreakdownText.textContent = `🏆 +${info.totalScore.toLocaleString()}점 누적! (기본 ${info.baseScore} + ⚡빠른 처치 보너스 +${info.speedBonus.toLocaleString()}${bungeeTxt} · ${info.elapsedSec}초/${info.turns}턴 컷 | 총 ${econ.cumulativeScore.toLocaleString()}점)`;
+          } else {
+            el.scoreBreakdownText.textContent = `참여 점수 +${info.totalScore}점 누적 (총 ${econ.cumulativeScore.toLocaleString()}점)`;
+          }
+        }
+      }
       if (el.doubleRewardAdBtn && !doubledThisMatch) {
         el.doubleRewardAdBtn.disabled = false;
-        el.doubleRewardAdBtn.textContent = '🎬 광고 보고 코인·학교점수 2배!';
+        el.doubleRewardAdBtn.textContent = '🎬 광고 보고 코인·스코어 2배!';
       }
       if (el.rewindAdBtn) {
         const lostSingle = state.gameMode === '1v1_ai' && state.carts?.[0] && !state.carts[0].alive;
@@ -483,7 +525,10 @@ export function initBakeryCommercialUi({ engine, ui, launchMatchSpec, saveUserPr
       }
     } else {
       doubledThisMatch = false;
+      scoreRecordedThisMatch = false;
+      lastEarnedScore = 0;
       el.rewardAdToast?.classList.add('hidden');
+      if (el.scoreBreakdownText) el.scoreBreakdownText.textContent = '';
     }
   };
 
